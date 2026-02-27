@@ -8,6 +8,7 @@ const userSchema = new mongoose.Schema({
     role: { type: String, default: "user" },
     resetOTP: { type: String },
     otpExpiry: { type: Date },
+    theme: { type: String, enum: ["light", "dark"], default: "light" }
 }, { timestamps: true, versionKey: false });
 
 userSchema.pre('save', async function () {

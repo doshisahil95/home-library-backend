@@ -31,7 +31,7 @@ app.use(helmet());
 // Use app-level CORS middleware to avoid path-to-regexp errors with '*' patterns
 app.use(cors({
     origin: ["http://localhost:5173"],
-    methods: ["GET", "POST", "PUT", "DELETE"],
+    methods: ["GET", "POST", "PUT", "DELETE", "PATCH"],
     allowedHeaders: ["Content-Type", "Authorization"],
     credentials: true
 }));

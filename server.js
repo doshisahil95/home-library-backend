@@ -51,7 +51,11 @@ app.use((req, res, next) => {
 });
 
 require("./api/routes/app.routes.js")(router);
-app.use("/app", router);
+app.use(router);
+
+app.get("/", (req, res) => {
+    res.send("Welcome to Home Library API");
+});
 
 const Server = http.createServer(app);
 

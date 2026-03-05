@@ -6,7 +6,6 @@ const bookSchema = new mongoose.Schema({
     genre: [{ type: String }],
     house: { type: String, required: true },
     description: { type: String },
-    tags: [{ type: String }],
 }, { timestamps: true, versionKey: false });
 
 module.exports = mongoose.model("Book", bookSchema);

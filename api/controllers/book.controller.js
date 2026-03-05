@@ -20,7 +20,7 @@ exports.getBooks = async (req, res) => {
 
 exports.addBook = async (req, res) => {
     try {
-        const { title, author, genre, house, description, tags } = req.body;
+        const { title, author, genre, house, description } = req.body;
 
         const book = await bookModel.create({
             title,
@@ -28,7 +28,6 @@ exports.addBook = async (req, res) => {
             genre,
             house,
             description,
-            tags
         });
 
         return res.status(201).json({
@@ -69,4 +68,40 @@ exports.updateBook = async (req, res) => {
             error: error.message
         });
     }
+};
+
+exports.deleteBook = async (req, res) => {
+
+    try {
+
+        console.log(req.params);
+        
+
+        const { id } = req.params;
+
+        const deleted = await bookModel.findByIdAndDelete(id);
+
+        if (!deleted) {
+
+            return res.status(404).json({
+                success: false,
+                message: "Book not found",
+            });
+
+        }
+
+        res.json({
+            success: true,
+            message: "Book deleted successfully",
+        });
+
+    } catch (error) {
+
+        res.status(500).json({
+            success: false,
+            message: "Failed to delete book",
+        });
+
+    }
+
 };

@@ -4,10 +4,11 @@ module.exports = function (app) {
     const userController = require("../controllers/user.controller.js");
     const auth = require("../controllers/middleware/auth.middleware.js");
 
-    app.get("/books", auth, bookController.getBooks);
-    app.post("/books", auth, bookController.addBook);
-    app.put("/books/:id", auth, bookController.updateBook);
-    app.delete("/books/:id", auth, bookController.deleteBook);
+    app.get("/fetchAllBooks", auth, bookController.fetchAllBooks);
+    app.post("/addBook", auth, bookController.addBook);
+    app.put("/updateBook/:id", auth, bookController.updateBook);
+    app.delete("/deleteBook/:id", auth, bookController.deleteBook);
+    app.get("/searchBooks", auth, bookController.searchBooks);
 
     app.patch("/users/theme", auth, userController.updateSettings);
 

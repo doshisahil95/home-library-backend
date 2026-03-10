@@ -14,14 +14,7 @@
 
 1. Make sure your `.env` file is listed in `.gitignore` and has never been committed to GitHub.
 
-2. Make sure your `package.json` has a `start` script — Railway uses this to run the app:
-   ```json
-   "scripts": {
-     "start": "node server.js"
-   }
-   ```
-
-3. Push all changes to GitHub.
+2. Push all changes to GitHub.
 
 ---
 

@@ -3,8 +3,8 @@ const mongoose = require("mongoose");
 
 exports.fetchAllBooks = async (req, res) => {
     try {
-        const limit = parseInt(req.query.limit) || 10;
-        const page = parseInt(req.query.page) || 1;
+        const limit = Math.max(1, Math.min(parseInt(req.query.limit) || 10, 100));
+        const page = Math.max(1, parseInt(req.query.page) || 1);
         const skip = (page - 1) * limit;
 
         const allowedSortFields = ["title", "author", "house"];
@@ -45,11 +45,16 @@ exports.fetchAllBooks = async (req, res) => {
 exports.searchBooks = async (req, res) => {
     try {
         const { q, field } = req.query;
-        const limit = parseInt(req.query.limit) || 10;
+        const limit = Math.max(1, Math.min(parseInt(req.query.limit) || 10, 100));
 
-        const searchAfter = req.query.searchAfter
-            ? JSON.parse(req.query.searchAfter)
-            : undefined;
+        let searchAfter;
+        try {
+            searchAfter = req.query.searchAfter
+                ? JSON.parse(req.query.searchAfter)
+                : undefined;
+        } catch {
+            return res.status(400).json({ message: "Invalid searchAfter value" });
+        }
 
         if (!q) {
             return res.status(400).json({ message: "Search query required" });

@@ -29,6 +29,10 @@ exports.login = async (req, res) => {
     try {
         const { email, password } = req.body;
 
+        if (!email || !password) {
+            return res.status(400).json({ message: "Email and password are required" });
+        }
+
         const user = await userModel.findOne({ email });
 
         if (!user || !(await user.comparePassword(password))) {
@@ -68,6 +72,10 @@ exports.sendResetOTP = async (req, res) => {
     try {
         const { email } = req.body;
 
+        if (!email) {
+            return res.status(200).json({ message: "OTP sent successfully" });
+        }
+
         const user = await userModel.findOne({ email });
 
         if (!user) {
@@ -77,7 +85,7 @@ exports.sendResetOTP = async (req, res) => {
         const otp = Math.floor(100000 + Math.random() * 900000).toString();
 
         user.resetOTP = crypto.createHash("sha256").update(otp).digest("hex");
-        user.otpExpiry = Date.now() + 10 * 60 * 1000; // 10 minutes
+        user.otpExpiry = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
         user.otpAttempts = 0;
 
         await user.save();
@@ -106,6 +114,10 @@ exports.sendResetOTP = async (req, res) => {
 exports.resetPassword = async (req, res) => {
     try {
         const { email, otp, newPassword } = req.body;
+
+        if (!email || !otp || !newPassword) {
+            return res.status(400).json({ message: "Invalid or expired OTP" });
+        }
 
         const user = await userModel.findOne({ email });
 

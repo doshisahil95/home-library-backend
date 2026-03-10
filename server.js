@@ -26,6 +26,7 @@ mongoose.connect(process.env.MONGODB_URI, {
     console.log('Connected to MongoDB');
 }).catch((err) => {
     console.error('Error connecting to MongoDB:', err);
+    process.exit(1);
 });
 
 process.on("SIGINT", async () => {
@@ -46,9 +47,17 @@ app.use(express.urlencoded({ limit: "50kb", extended: true }));
 // HELMET CONFIGURATION
 app.use(helmet());
 
-// CORS CONFIGURATION
+const allowedOrigins = (process.env.CORS_ORIGIN || "http://localhost:5173")
+    .split(",")
+    .map((o) => o.trim());
+
 app.use(cors({
-    origin: ["http://localhost:5173"],
+    origin: (origin, callback) => {
+        // Allow requests with no origin (e.g. curl, Postman, server-to-server)
+        if (!origin) return callback(null, true);
+        if (allowedOrigins.includes(origin)) return callback(null, true);
+        callback(new Error("CORS: origin " + origin + " not allowed"));
+    },
     methods: ["GET", "POST", "PUT", "DELETE", "PATCH"],
     allowedHeaders: ["Content-Type", "Authorization"],
     credentials: true
@@ -57,7 +66,7 @@ app.use(cors({
 // RATE LIMITER
 const RateLimit = rateLimit({
     windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000,
-    max: parseInt(process.env.RATE_LIMIT_MAX) || 100,
+    max: parseInt(process.env.RATE_LIMIT_MAX) || 300,
     message: "You have exceeded the request limit!",
     headers: true,
 });
@@ -67,7 +76,6 @@ app.use((req, res, next) => {
     res.set("Cache-Control", "no-store");
     next();
 });
-
 
 require("./api/routes/app.routes.js")(app);
 app.get("/", (req, res) => {

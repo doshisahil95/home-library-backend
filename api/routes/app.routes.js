@@ -2,6 +2,7 @@ module.exports = function (app) {
     const loginController = require("../controllers/login.controller.js");
     const bookController = require("../controllers/book.controller.js");
     const userController = require("../controllers/user.controller.js");
+    const dashboardController = require("../controllers/dashboard.controller.js");
     const auth = require("../controllers/middleware/auth.middleware.js");
 
     app.get("/fetchAllBooks", auth, bookController.fetchAllBooks);
@@ -9,6 +10,8 @@ module.exports = function (app) {
     app.put("/updateBook/:id", auth, bookController.updateBook);
     app.delete("/deleteBook/:id", auth, bookController.deleteBook);
     app.get("/searchBooks", auth, bookController.searchBooks);
+
+    app.get("/dashboard", auth, dashboardController.getDashboardStats);
 
     app.patch("/users/theme", auth, userController.updateSettings);
 

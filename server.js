@@ -2,12 +2,20 @@
 require('dotenv').config();
 const express = require('express');
 const app = express();
-const router = express.Router();
 const mongoose = require("mongoose");
 const helmet = require("helmet");
 const http = require("http");
 const cors = require("cors");
 const rateLimit = require("express-rate-limit");
+
+if (!process.env.JWT_SECRET) {
+    console.error("FATAL: JWT_SECRET is not set");
+    process.exit(1);
+}
+if (!process.env.MONGODB_URI) {
+    console.error("FATAL: MONGODB_URI is not set");
+    process.exit(1);
+}
 
 // MONGOOSE CONNECTION TO MONGODB
 mongoose.connect(process.env.MONGODB_URI, {
@@ -20,15 +28,25 @@ mongoose.connect(process.env.MONGODB_URI, {
     console.error('Error connecting to MongoDB:', err);
 });
 
-// BODY PARSER
-app.use(express.json({ limit: "5mb" }));
-app.use(express.urlencoded({ limit: "5mb", extended: true }));
+process.on("SIGINT", async () => {
+    await mongoose.disconnect();
+    console.log("MongoDB disconnected. Shutting down.");
+    process.exit(0);
+});
+
+process.on("SIGTERM", async () => {
+    await mongoose.disconnect();
+    console.log("MongoDB disconnected. Shutting down.");
+    process.exit(0);
+});
+
+app.use(express.json({ limit: "50kb" }));
+app.use(express.urlencoded({ limit: "50kb", extended: true }));
 
 // HELMET CONFIGURATION
 app.use(helmet());
 
 // CORS CONFIGURATION
-// Use app-level CORS middleware to avoid path-to-regexp errors with '*' patterns
 app.use(cors({
     origin: ["http://localhost:5173"],
     methods: ["GET", "POST", "PUT", "DELETE", "PATCH"],
@@ -38,8 +56,8 @@ app.use(cors({
 
 // RATE LIMITER
 const RateLimit = rateLimit({
-    windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000, // 15 minutes
-    max: parseInt(process.env.RATE_LIMIT_MAX) || 100, // limit each IP to 100 requests per windowMs
+    windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000,
+    max: parseInt(process.env.RATE_LIMIT_MAX) || 100,
     message: "You have exceeded the request limit!",
     headers: true,
 });
@@ -50,15 +68,19 @@ app.use((req, res, next) => {
     next();
 });
 
-require("./api/routes/app.routes.js")(router);
-app.use(router);
 
+require("./api/routes/app.routes.js")(app);
 app.get("/", (req, res) => {
     res.send("Welcome to Home Library API");
 });
 
+app.use((err, req, res, next) => {
+    console.error(err);
+    res.status(500).json({ message: "Internal server error" });
+});
+
 const Server = http.createServer(app);
 
-Server.listen(process.env.PORT, () => {
-    console.log("Server is listening at port " + process.env.PORT);
+Server.listen(process.env.PORT || 3000, () => {
+    console.log("Server is listening at port " + (process.env.PORT || 3000));
 });

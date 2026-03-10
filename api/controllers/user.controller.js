@@ -1,6 +1,6 @@
 const userModel = require("../models/user.model.js");
 
-exports.updateSettings = async (req, res) => {
+exports.updateTheme = async (req, res) => {
     try {
         const { theme } = req.body;
 
@@ -13,6 +13,10 @@ exports.updateSettings = async (req, res) => {
             { theme },
             { new: true }
         );
+
+        if (!user) {
+            return res.status(404).json({ message: "User not found" });
+        }
 
         res.json({ message: "Theme updated", theme: user.theme });
 

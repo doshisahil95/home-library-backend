@@ -56,7 +56,7 @@ exports.login = async (req, res) => {
     } catch (error) {
         return res.status(500).json({
             message: "Login failed",
-            error: error.message
+            error: process.env.NODE_ENV === "development" ? error.message : undefined
         });
     }
 };
@@ -71,13 +71,14 @@ exports.sendResetOTP = async (req, res) => {
         const user = await userModel.findOne({ email });
 
         if (!user) {
-            return res.status(404).json({ message: "User not found" });
+            return res.status(200).json({ message: "OTP sent successfully" });
         }
 
         const otp = Math.floor(100000 + Math.random() * 900000).toString();
 
         user.resetOTP = crypto.createHash("sha256").update(otp).digest("hex");
         user.otpExpiry = Date.now() + 10 * 60 * 1000; // 10 minutes
+        user.otpAttempts = 0;
 
         await user.save();
 
@@ -94,7 +95,7 @@ exports.sendResetOTP = async (req, res) => {
     } catch (error) {
         return res.status(500).json({
             message: "Failed to send OTP",
-            error: error.message
+            error: process.env.NODE_ENV === "development" ? error.message : undefined
         });
     }
 };
@@ -109,7 +110,13 @@ exports.resetPassword = async (req, res) => {
         const user = await userModel.findOne({ email });
 
         if (!user) {
-            return res.status(404).json({ message: "User not found" });
+            return res.status(400).json({ message: "Invalid or expired OTP" });
+        }
+
+        if (user.otpAttempts >= 5) {
+            return res.status(400).json({
+                message: "Too many failed attempts. Please request a new OTP."
+            });
         }
 
         const hashedOTP = crypto.createHash("sha256").update(otp).digest("hex");
@@ -119,6 +126,9 @@ exports.resetPassword = async (req, res) => {
             !user.otpExpiry ||
             user.otpExpiry < Date.now()
         ) {
+            user.otpAttempts = (user.otpAttempts || 0) + 1;
+            await user.save();
+
             return res.status(400).json({
                 message: "Invalid or expired OTP"
             });
@@ -127,6 +137,7 @@ exports.resetPassword = async (req, res) => {
         user.password = newPassword; // auto-hashed via pre-save hook
         user.resetOTP = undefined;
         user.otpExpiry = undefined;
+        user.otpAttempts = undefined;
 
         await user.save();
 
@@ -137,7 +148,7 @@ exports.resetPassword = async (req, res) => {
     } catch (error) {
         return res.status(500).json({
             message: "Password reset failed",
-            error: error.message
+            error: process.env.NODE_ENV === "development" ? error.message : undefined
         });
     }
 };

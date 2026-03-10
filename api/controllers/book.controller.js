@@ -7,7 +7,6 @@ exports.fetchAllBooks = async (req, res) => {
         const page = parseInt(req.query.page) || 1;
         const skip = (page - 1) * limit;
 
-        // SORT: validate and read sort params
         const allowedSortFields = ["title", "author", "house"];
         const sortBy = allowedSortFields.includes(req.query.sortBy) ? req.query.sortBy : null;
         const sortOrder = req.query.sortOrder === "desc" ? -1 : 1;
@@ -16,10 +15,9 @@ exports.fetchAllBooks = async (req, res) => {
             ? { [sortBy]: sortOrder, _id: sortOrder }
             : { _id: -1 };
 
-        // Run query and total count in parallel for efficiency
         const [results, total] = await Promise.all([
             bookModel.find().sort(sortStage).skip(skip).limit(limit),
-            bookModel.estimatedDocumentCount()
+            bookModel.countDocuments()
         ]);
 
         const totalPages = Math.ceil(total / limit);
@@ -38,7 +36,7 @@ exports.fetchAllBooks = async (req, res) => {
     } catch (error) {
         res.status(500).json({
             message: "Failed to fetch books",
-            error: error.message
+            error: process.env.NODE_ENV === "development" ? error.message : undefined
         });
     }
 };
@@ -129,7 +127,10 @@ exports.searchBooks = async (req, res) => {
 
     } catch (error) {
         console.error(error);
-        res.status(500).json({ message: "Search failed", error: error.message });
+        res.status(500).json({
+            message: "Search failed",
+            error: process.env.NODE_ENV === "development" ? error.message : undefined
+        });
     }
 };
 
@@ -156,7 +157,8 @@ exports.addBook = async (req, res) => {
 
     } catch (error) {
         res.status(500).json({
-            message: "Failed to add book"
+            message: "Failed to add book",
+            error: process.env.NODE_ENV === "development" ? error.message : undefined
         });
     }
 };
@@ -166,11 +168,25 @@ exports.updateBook = async (req, res) => {
     try {
         const { id } = req.params;
 
+        if (!mongoose.Types.ObjectId.isValid(id)) {
+            return res.status(400).json({ message: "Invalid book ID" });
+        }
+
+        const { title, author, genre, house, description } = req.body;
+
+        if (!title || !author || !house || !genre?.length) {
+            return res.status(400).json({ message: "All fields required" });
+        }
+
         const updated = await bookModel.findByIdAndUpdate(
             id,
-            req.body,
+            { title, author, genre, house, description },
             { new: true }
         );
+
+        if (!updated) {
+            return res.status(404).json({ message: "Book not found" });
+        }
 
         res.json({
             data: updated
@@ -178,7 +194,8 @@ exports.updateBook = async (req, res) => {
 
     } catch (error) {
         res.status(500).json({
-            message: "Update failed"
+            message: "Update failed",
+            error: process.env.NODE_ENV === "development" ? error.message : undefined
         });
     }
 };
@@ -186,7 +203,17 @@ exports.updateBook = async (req, res) => {
 
 exports.deleteBook = async (req, res) => {
     try {
-        await bookModel.findByIdAndDelete(req.params.id);
+        const { id } = req.params;
+
+        if (!mongoose.Types.ObjectId.isValid(id)) {
+            return res.status(400).json({ message: "Invalid book ID" });
+        }
+
+        const deleted = await bookModel.findByIdAndDelete(id);
+
+        if (!deleted) {
+            return res.status(404).json({ message: "Book not found" });
+        }
 
         res.json({
             success: true
@@ -194,7 +221,8 @@ exports.deleteBook = async (req, res) => {
 
     } catch (error) {
         res.status(500).json({
-            message: "Delete failed"
+            message: "Delete failed",
+            error: process.env.NODE_ENV === "development" ? error.message : undefined
         });
     }
 };

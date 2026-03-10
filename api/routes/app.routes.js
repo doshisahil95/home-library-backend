@@ -3,7 +3,8 @@ module.exports = function (app) {
     const bookController = require("../controllers/book.controller.js");
     const userController = require("../controllers/user.controller.js");
     const dashboardController = require("../controllers/dashboard.controller.js");
-    const auth = require("../controllers/middleware/auth.middleware.js");
+
+    const auth = require("../middleware/auth.middleware.js");
 
     app.get("/fetchAllBooks", auth, bookController.fetchAllBooks);
     app.post("/addBook", auth, bookController.addBook);
@@ -13,9 +14,9 @@ module.exports = function (app) {
 
     app.get("/dashboard", auth, dashboardController.getDashboardStats);
 
-    app.patch("/users/theme", auth, userController.updateSettings);
+    app.patch("/users/theme", auth, userController.updateTheme);
 
     app.post("/login", loginController.login);
     app.post("/send-reset-otp", loginController.sendResetOTP);
     app.post("/reset-password", loginController.resetPassword);
-}
+};

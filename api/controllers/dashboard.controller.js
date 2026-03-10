@@ -3,10 +3,10 @@ const bookModel = require("../models/book.model.js");
 exports.getDashboardStats = async (req, res) => {
     try {
         // Run all aggregations in parallel for efficiency
-        const [totals, byHouse, byGenre, recentBooks] = await Promise.all([
+        const [totalBooks, byHouse, byGenre, recentBooks] = await Promise.all([
 
-            // 1. Total books
-            bookModel.estimatedDocumentCount(),
+            // 1. Total books — FIX 18: use countDocuments() for accuracy
+            bookModel.countDocuments(),
 
             // 2. Books per house
             bookModel.aggregate([
@@ -33,7 +33,7 @@ exports.getDashboardStats = async (req, res) => {
 
         res.json({
             data: {
-                totalBooks: totals,
+                totalBooks,
                 byHouse,
                 byGenre,
                 recentBooks
@@ -44,7 +44,7 @@ exports.getDashboardStats = async (req, res) => {
         console.error(error);
         res.status(500).json({
             message: "Failed to fetch dashboard stats",
-            error: error.message
+            error: process.env.NODE_ENV === "development" ? error.message : undefined
         });
     }
 };

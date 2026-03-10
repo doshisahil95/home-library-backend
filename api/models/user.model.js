@@ -2,12 +2,20 @@ const mongoose = require("mongoose");
 const bcrypt = require('bcrypt');
 
 const userSchema = new mongoose.Schema({
-    name: { type: String, required: true },
-    email: { type: String, required: true, unique: true },
+    name: { type: String, required: true, trim: true },
+    email: {
+        type: String,
+        required: true,
+        unique: true,
+        trim: true,
+        lowercase: true,
+        match: [/^\S+@\S+\.\S+$/, "Invalid email format"]
+    },
     password: { type: String, required: true },
-    role: { type: String, default: "user" },
+    role: { type: String, enum: ["user", "admin"], default: "user" },
     resetOTP: { type: String },
     otpExpiry: { type: Date },
+    otpAttempts: { type: Number, default: 0 },
     theme: { type: String, enum: ["light", "dark"], default: "light" }
 }, { timestamps: true, versionKey: false });
 

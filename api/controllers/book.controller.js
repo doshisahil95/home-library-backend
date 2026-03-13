@@ -3,6 +3,14 @@ const mongoose = require("mongoose");
 
 const ALLOWED_STATUSES = ["read", "reading", "want to read"];
 
+// Strip HTML tags from free-text input to neutralise any injected markup.
+// React escapes output by default so XSS via the browser is already blocked,
+// but sanitising at write-time protects any future non-React consumers
+// (exports, emails, server-side rendering) that may render the raw DB value.
+function sanitizeText(str) {
+    return str ? str.replace(/<[^>]*>/g, "").trim() : "";
+}
+
 // Extracts the current user's status from a book's statuses array and returns
 // it as a plain string (or null). Single source of truth — used by all handlers.
 function extractUserStatus(book, userId) {
@@ -28,13 +36,8 @@ exports.fetchAllBooks = async (req, res) => {
 
         const filter = {};
 
-        if (req.query.filterHouse) {
-            filter.house = req.query.filterHouse;
-        }
-
-        if (req.query.filterGenre) {
-            filter.genre = req.query.filterGenre;
-        }
+        if (req.query.filterHouse) filter.house = req.query.filterHouse;
+        if (req.query.filterGenre) filter.genre = req.query.filterGenre;
 
         if (req.query.filterStatus) {
             if (!ALLOWED_STATUSES.includes(req.query.filterStatus)) {
@@ -44,12 +47,10 @@ exports.fetchAllBooks = async (req, res) => {
                 $elemMatch: {
                     userId: new mongoose.Types.ObjectId(req.user.id),
                     status: req.query.filterStatus,
-                }
+                },
             };
         }
 
-        // .lean() returns plain JS objects — skips Mongoose document overhead since
-        // we only need to read and re-shape the data, not call any document methods
         const [results, total] = await Promise.all([
             bookModel.find(filter).sort(sortStage).skip(skip).limit(limit).lean(),
             bookModel.countDocuments(filter),
@@ -117,15 +118,8 @@ exports.searchBooks = async (req, res) => {
         }
 
         const filters = [];
-
-        if (filterHouse) {
-            filters.push({ equals: { path: "house", value: filterHouse } });
-        }
-
-        if (filterGenre) {
-            filters.push({ equals: { path: "genre", value: filterGenre } });
-        }
-
+        if (filterHouse) filters.push({ equals: { path: "house", value: filterHouse } });
+        if (filterGenre) filters.push({ equals: { path: "genre", value: filterGenre } });
         if (filterStatus) {
             filters.push({
                 embeddedDocument: {
@@ -142,9 +136,7 @@ exports.searchBooks = async (req, res) => {
             });
         }
 
-        if (filters.length > 0) {
-            compound.filter = filters;
-        }
+        if (filters.length > 0) compound.filter = filters;
 
         const pipeline = [
             {
@@ -167,7 +159,6 @@ exports.searchBooks = async (req, res) => {
             results.pop();
         }
 
-        // aggregate() returns plain objects — extractUserStatus works directly
         const data = results.map((book) => ({
             ...book,
             userStatus: extractUserStatus(book, req.user.id),
@@ -198,17 +189,16 @@ exports.addBook = async (req, res) => {
             return res.status(400).json({ message: "All fields required" });
         }
 
-        // Validate description length explicitly before hitting the model
         if (description && description.length > 1000) {
             return res.status(400).json({ message: "Description must be 1000 characters or fewer" });
         }
 
         const book = await bookModel.create({
-            title: title.trim(),
-            author: author.trim(),
+            title: sanitizeText(title),
+            author: sanitizeText(author),
             genre,
             house,
-            description: description?.trim() || "",
+            description: sanitizeText(description),
         });
 
         res.status(201).json({ data: { ...book.toObject(), userStatus: null } });
@@ -249,36 +239,26 @@ exports.updateBook = async (req, res) => {
         const userId = new mongoose.Types.ObjectId(req.user.id);
         const userIdStr = req.user.id.toString();
 
-        // Update core fields and handle status atomically in a single round-trip.
-        // Strategy:
-        //   1. Always $pull the user's existing status entry (removes if present)
-        //   2. If a new status is provided, $push the new entry
-        // Using two sequential operations is safe here because $pull + $push on
-        // the same document are applied in order, and there's no concurrent
-        // writer risk for a per-user status field at home-app scale.
-
         const coreUpdate = {
-            title: title.trim(),
-            author: author.trim(),
+            title: sanitizeText(title),
+            author: sanitizeText(author),
             genre,
             house,
-            description: description?.trim() || "",
+            description: sanitizeText(description),
         };
 
-        // Step 1: update core fields and remove any existing status for this user
+        // Atomic status update — $pull existing entry, then $push new one if set
         await bookModel.findByIdAndUpdate(id, {
             $set: coreUpdate,
             $pull: { statuses: { userId } },
         });
 
-        // Step 2: push new status if one was provided
         if (userStatus) {
             await bookModel.findByIdAndUpdate(id, {
                 $push: { statuses: { userId, status: userStatus } },
             });
         }
 
-        // Fetch the final document to return to the client
         const updated = await bookModel.findById(id).lean();
 
         if (!updated) {

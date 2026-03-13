@@ -1,12 +1,11 @@
-// DEPENDENCIES
 const jwt = require("jsonwebtoken");
 const crypto = require("crypto");
 const nodemailer = require("nodemailer");
 
-// MODELS
 const userModel = require("../models/user.model.js");
 
-// MAIL CONFIG
+// ─── Mail config ──────────────────────────────────────────────────────────────
+
 const transporter = nodemailer.createTransport({
     host: "smtp.gmail.com",
     port: 587,
@@ -18,12 +17,20 @@ const transporter = nodemailer.createTransport({
 });
 
 transporter.verify((err) => {
-    if (err) console.log("Email error:", err);
+    if (err) console.error("Email server error:", err.message);
     else console.log("Email server ready");
 });
 
 
-/* ================= LOGIN ================= */
+// ─── Constants ────────────────────────────────────────────────────────────────
+
+const LOGIN_MAX_ATTEMPTS = 5;
+const LOGIN_LOCKOUT_MS = 15 * 60 * 1000; // 15 minutes
+const OTP_MAX_ATTEMPTS = 5;
+const OTP_EXPIRY_MS = 10 * 60 * 1000; // 10 minutes
+
+
+/* ═══════════════════════ LOGIN ═══════════════════════════════════════════════ */
 
 exports.login = async (req, res) => {
     try {
@@ -35,14 +42,48 @@ exports.login = async (req, res) => {
 
         const user = await userModel.findOne({ email });
 
-        if (!user || !(await user.comparePassword(password))) {
+        // Use a consistent error message whether the user exists or not —
+        // prevents email enumeration by timing or message differences
+        if (!user) {
             return res.status(400).json({ message: "Invalid email or password" });
         }
+
+        // Check lockout before comparing passwords — fail fast, no bcrypt cost
+        if (user.isLocked()) {
+            const remaining = Math.ceil((user.lockUntil - Date.now()) / 60000);
+            return res.status(429).json({
+                message: `Account temporarily locked. Try again in ${remaining} minute${remaining === 1 ? "" : "s"}.`
+            });
+        }
+
+        const passwordValid = await user.comparePassword(password);
+
+        if (!passwordValid) {
+            // Increment attempt counter; lock if threshold reached
+            user.loginAttempts = (user.loginAttempts || 0) + 1;
+
+            if (user.loginAttempts >= LOGIN_MAX_ATTEMPTS) {
+                user.lockUntil = new Date(Date.now() + LOGIN_LOCKOUT_MS);
+                user.loginAttempts = 0; // reset counter — lockUntil carries the state
+                await user.save();
+                return res.status(429).json({
+                    message: "Too many failed attempts. Account locked for 15 minutes."
+                });
+            }
+
+            await user.save();
+            return res.status(400).json({ message: "Invalid email or password" });
+        }
+
+        // Successful login — clear any lockout state
+        user.loginAttempts = 0;
+        user.lockUntil = undefined;
+        await user.save();
 
         const token = jwt.sign(
             { id: user._id, role: user.role },
             process.env.JWT_SECRET,
-            { expiresIn: "1d" }
+            { expiresIn: "4h" }
         );
 
         return res.status(200).json({
@@ -53,25 +94,26 @@ exports.login = async (req, res) => {
                 name: user.name,
                 email: user.email,
                 role: user.role,
-                theme: user.theme
-            }
+                theme: user.theme,
+            },
         });
 
     } catch (error) {
         return res.status(500).json({
             message: "Login failed",
-            error: process.env.NODE_ENV === "development" ? error.message : undefined
+            error: process.env.NODE_ENV === "development" ? error.message : undefined,
         });
     }
 };
 
 
-/* ================= SEND RESET OTP ================= */
+/* ═══════════════════════ SEND RESET OTP ═════════════════════════════════════ */
 
 exports.sendResetOTP = async (req, res) => {
     try {
         const { email } = req.body;
 
+        // Always return 200 — prevents email enumeration
         if (!email) {
             return res.status(200).json({ message: "OTP sent successfully" });
         }
@@ -85,7 +127,7 @@ exports.sendResetOTP = async (req, res) => {
         const otp = Math.floor(100000 + Math.random() * 900000).toString();
 
         user.resetOTP = crypto.createHash("sha256").update(otp).digest("hex");
-        user.otpExpiry = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+        user.otpExpiry = new Date(Date.now() + OTP_EXPIRY_MS);
         user.otpAttempts = 0;
 
         await user.save();
@@ -93,23 +135,21 @@ exports.sendResetOTP = async (req, res) => {
         await transporter.sendMail({
             to: email,
             subject: "Password Reset OTP",
-            text: `Your OTP is: ${otp}`,
+            text: `Your OTP is: ${otp}\n\nThis code expires in 10 minutes. Do not share it with anyone.`,
         });
 
-        return res.status(200).json({
-            message: "OTP sent successfully"
-        });
+        return res.status(200).json({ message: "OTP sent successfully" });
 
     } catch (error) {
         return res.status(500).json({
             message: "Failed to send OTP",
-            error: process.env.NODE_ENV === "development" ? error.message : undefined
+            error: process.env.NODE_ENV === "development" ? error.message : undefined,
         });
     }
 };
 
 
-/* ================= RESET PASSWORD ================= */
+/* ═══════════════════════ RESET PASSWORD ════════════════════════════════════ */
 
 exports.resetPassword = async (req, res) => {
     try {
@@ -125,7 +165,7 @@ exports.resetPassword = async (req, res) => {
             return res.status(400).json({ message: "Invalid or expired OTP" });
         }
 
-        if (user.otpAttempts >= 5) {
+        if (user.otpAttempts >= OTP_MAX_ATTEMPTS) {
             return res.status(400).json({
                 message: "Too many failed attempts. Please request a new OTP."
             });
@@ -140,27 +180,25 @@ exports.resetPassword = async (req, res) => {
         ) {
             user.otpAttempts = (user.otpAttempts || 0) + 1;
             await user.save();
-
-            return res.status(400).json({
-                message: "Invalid or expired OTP"
-            });
+            return res.status(400).json({ message: "Invalid or expired OTP" });
         }
 
-        user.password = newPassword; // auto-hashed via pre-save hook
+        // Valid OTP — update password and clear all OTP + lockout state
+        user.password = newPassword; // hashed via pre-save hook
         user.resetOTP = undefined;
         user.otpExpiry = undefined;
         user.otpAttempts = undefined;
+        user.loginAttempts = 0;           // also clear any login lockout
+        user.lockUntil = undefined;
 
         await user.save();
 
-        return res.status(200).json({
-            message: "Password reset successful"
-        });
+        return res.status(200).json({ message: "Password reset successful" });
 
     } catch (error) {
         return res.status(500).json({
             message: "Password reset failed",
-            error: process.env.NODE_ENV === "development" ? error.message : undefined
+            error: process.env.NODE_ENV === "development" ? error.message : undefined,
         });
     }
 };

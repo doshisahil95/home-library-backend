@@ -1,4 +1,3 @@
-// All controllers and middleware required once at module load — not on every request
 const loginController = require("../controllers/login.controller.js");
 const bookController = require("../controllers/book.controller.js");
 const userController = require("../controllers/user.controller.js");
@@ -6,10 +5,14 @@ const dashboardController = require("../controllers/dashboard.controller.js");
 const auth = require("../middleware/auth.middleware.js");
 
 module.exports = function (app) {
-    // ─── Auth (public) ─────────────────────────────────────────────────────
-    app.post("/login", loginController.login);
-    app.post("/send-reset-otp", loginController.sendResetOTP);
-    app.post("/reset-password", loginController.resetPassword);
+    // Auth-specific rate limiter — set in server.js, applied here only to
+    // public endpoints that are the primary targets for credential attacks
+    const authLimiter = app.locals.authLimiter;
+
+    // ─── Auth (public, rate-limited tightly) ───────────────────────────────
+    app.post("/login", authLimiter, loginController.login);
+    app.post("/send-reset-otp", authLimiter, loginController.sendResetOTP);
+    app.post("/reset-password", authLimiter, loginController.resetPassword);
 
     // ─── Books (protected) ─────────────────────────────────────────────────
     app.get("/fetchAllBooks", auth, bookController.fetchAllBooks);

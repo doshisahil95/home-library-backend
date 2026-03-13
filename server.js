@@ -1,5 +1,5 @@
-require('dotenv').config();
-const express = require('express');
+require("dotenv").config();
+const express = require("express");
 const mongoose = require("mongoose");
 const helmet = require("helmet");
 const cors = require("cors");
@@ -9,8 +9,8 @@ const app = express();
 
 // ─── Startup validation ───────────────────────────────────────────────────────
 
-if (!process.env.JWT_SECRET) {
-    console.error("FATAL: JWT_SECRET is not set");
+if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32) {
+    console.error("FATAL: JWT_SECRET must be set and at least 32 characters");
     process.exit(1);
 }
 if (!process.env.MONGODB_URI) {
@@ -41,14 +41,35 @@ const gracefulShutdown = async (signal) => {
 process.on("SIGINT", () => gracefulShutdown("SIGINT"));
 process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
 
-// ─── Middleware ───────────────────────────────────────────────────────────────
+// ─── HTTPS enforcement ────────────────────────────────────────────────────────
+// Railway terminates TLS at the edge and forwards via x-forwarded-proto.
+// Redirect any plain HTTP request to HTTPS in production.
 
-app.use(express.json({ limit: "50kb" }));
-app.use(express.urlencoded({ limit: "50kb", extended: true }));
-app.use(helmet());
+app.set("trust proxy", 1); // trust Railway's reverse proxy
 
-// CORS — reject unknown origins silently (callback(null, false)) so the
-// browser receives a proper CORS block instead of a 500 from a thrown error
+app.use((req, res, next) => {
+    if (
+        process.env.NODE_ENV === "production" &&
+        req.headers["x-forwarded-proto"] !== "https"
+    ) {
+        return res.redirect(301, `https://${req.headers.host}${req.url}`);
+    }
+    next();
+});
+
+// ─── Helmet (security headers + HSTS) ────────────────────────────────────────
+
+app.use(helmet({
+    hsts: {
+        maxAge: 31536000, // 1 year in seconds
+        includeSubDomains: true,
+    },
+    // contentSecurityPolicy left at Helmet's secure defaults —
+    // tighten per-environment via vercel.json on the frontend
+}));
+
+// ─── CORS ─────────────────────────────────────────────────────────────────────
+
 const allowedOrigins = (process.env.CORS_ORIGIN || "http://localhost:5173")
     .split(",")
     .map((o) => o.trim());
@@ -57,23 +78,46 @@ app.use(cors({
     origin: (origin, callback) => {
         if (!origin) return callback(null, true); // curl, Postman, server-to-server
         if (allowedOrigins.includes(origin)) return callback(null, true);
-        callback(null, false); // silently reject — browser shows CORS error
+        callback(null, false); // reject — browser receives a proper CORS block
     },
     methods: ["GET", "POST", "PUT", "DELETE", "PATCH"],
     allowedHeaders: ["Content-Type", "Authorization"],
     credentials: true,
 }));
 
-// Rate limiter
-const limiter = rateLimit({
+// ─── Body parsing ─────────────────────────────────────────────────────────────
+
+app.use(express.json({ limit: "50kb" }));
+app.use(express.urlencoded({ limit: "50kb", extended: true }));
+
+// ─── Rate limiting ────────────────────────────────────────────────────────────
+// Two tiers:
+//   authLimiter  — tight limit on unauthenticated endpoints (login, OTP, reset)
+//   globalLimiter — broader limit on all other traffic
+
+const authLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 10,              // 10 attempts per IP per window
+    message: "Too many attempts. Please try again later.",
+    standardHeaders: true,
+    legacyHeaders: false,
+});
+
+const globalLimiter = rateLimit({
     windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000,
     max: parseInt(process.env.RATE_LIMIT_MAX) || 300,
     message: "You have exceeded the request limit.",
-    headers: true,
+    standardHeaders: true,
+    legacyHeaders: false,
 });
-app.use(limiter);
 
-// Disable response caching for all API responses
+app.use(globalLimiter);
+
+// Auth-specific limiter applied in routes — exported so app.routes.js can use it
+app.locals.authLimiter = authLimiter;
+
+// ─── Cache control ────────────────────────────────────────────────────────────
+
 app.use((req, res, next) => {
     res.set("Cache-Control", "no-store");
     next();
@@ -84,7 +128,7 @@ app.use((req, res, next) => {
 require("./api/routes/app.routes.js")(app);
 
 app.get("/", (req, res) => {
-    res.send("Welcome to Home Library API");
+    res.send("Home Library API");
 });
 
 // ─── Global error handler ─────────────────────────────────────────────────────

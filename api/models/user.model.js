@@ -26,11 +26,9 @@ const userSchema = new mongoose.Schema({
     theme: { type: String, enum: ["light", "dark"], default: "light" },
 }, { timestamps: true, versionKey: false });
 
-userSchema.pre("save", async function (next) {
+userSchema.pre("save", async function () {
     console.log("pre-save hook fired, next type:", typeof next);
-    if (!this.isModified("password")) return next();
     this.password = await bcrypt.hash(this.password, 10);
-    next();
 });
 
 userSchema.methods.comparePassword = function (password) {

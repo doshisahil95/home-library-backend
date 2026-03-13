@@ -11,9 +11,11 @@ module.exports = (req, res, next) => {
 
     try {
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
-        req.user = decoded;
+        // Expose only the fields controllers need — prevents future payload fields
+        // from leaking into req.user unexpectedly
+        req.user = { id: decoded.id, role: decoded.role };
         next();
-    } catch (err) {
+    } catch {
         return res.status(401).json({ message: "Invalid or expired token" });
     }
 };

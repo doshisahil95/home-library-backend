@@ -1,19 +1,26 @@
 const bookModel = require("../models/book.model.js");
+const mongoose = require("mongoose");
 
 exports.getDashboardStats = async (req, res) => {
     try {
-        const userId = req.user.id;
+        // Validate userId before using it in an aggregation — a malformed id
+        // would throw inside the pipeline with a confusing error
+        if (!mongoose.Types.ObjectId.isValid(req.user.id)) {
+            return res.status(400).json({ message: "Invalid user ID" });
+        }
+
+        const userId = new mongoose.Types.ObjectId(req.user.id);
 
         const [totalBooks, byHouse, byGenre, recentBooks, byStatus] = await Promise.all([
 
             // 1. Total books
             bookModel.countDocuments(),
 
-            // 2. Books per house
+            // 2. Books per house — sorted descending by count
             bookModel.aggregate([
                 { $group: { _id: "$house", count: { $sum: 1 } } },
                 { $sort: { count: -1 } },
-                { $project: { _id: 0, house: "$_id", count: 1 } }
+                { $project: { _id: 0, house: "$_id", count: 1 } },
             ]),
 
             // 3. Books per genre — unwind so each genre tag is counted individually
@@ -21,40 +28,37 @@ exports.getDashboardStats = async (req, res) => {
                 { $unwind: "$genre" },
                 { $group: { _id: "$genre", count: { $sum: 1 } } },
                 { $sort: { count: -1 } },
-                { $project: { _id: 0, genre: "$_id", count: 1 } }
+                { $limit: 50 }, // cap at 50 genres to avoid unbounded payloads
+                { $project: { _id: 0, genre: "$_id", count: 1 } },
             ]),
 
-            // 4. Last 5 recently added books
+            // 4. Last 5 recently added — .lean() skips Mongoose document overhead
+            //    since we only read these fields
             bookModel
                 .find()
                 .sort({ createdAt: -1 })
                 .limit(5)
-                .select("title author house createdAt"),
+                .select("title author house createdAt")
+                .lean(),
 
-            // 5. Current user's books by status
+            // 5. Current user's books by reading status
             bookModel.aggregate([
                 { $unwind: "$statuses" },
-                { $match: { "statuses.userId": new (require("mongoose").Types.ObjectId)(userId) } },
+                { $match: { "statuses.userId": userId } },
                 { $group: { _id: "$statuses.status", count: { $sum: 1 } } },
-                { $project: { _id: 0, status: "$_id", count: 1 } }
-            ])
+                { $project: { _id: 0, status: "$_id", count: 1 } },
+            ]),
         ]);
 
         res.json({
-            data: {
-                totalBooks,
-                byHouse,
-                byGenre,
-                recentBooks,
-                byStatus
-            }
+            data: { totalBooks, byHouse, byGenre, recentBooks, byStatus },
         });
 
     } catch (error) {
         console.error(error);
         res.status(500).json({
             message: "Failed to fetch dashboard stats",
-            error: process.env.NODE_ENV === "development" ? error.message : undefined
+            error: process.env.NODE_ENV === "development" ? error.message : undefined,
         });
     }
 };

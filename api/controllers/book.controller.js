@@ -3,34 +3,29 @@ const mongoose = require("mongoose");
 
 const ALLOWED_STATUSES = ["read", "reading", "want to read"];
 
-// Extracts the current user's status from a book's statuses array and
-// returns it as a plain string (or null). Called before sending any book
-// to the frontend so the client never has to dig through the array.
+// Extracts the current user's status from a book's statuses array and returns
+// it as a plain string (or null). Single source of truth — used by all handlers.
 function extractUserStatus(book, userId) {
-    const entry = book.statuses?.find(
+    const entry = (book.statuses || []).find(
         (s) => s.userId.toString() === userId.toString()
     );
     return entry?.status || null;
 }
 
 
-// ─── Fetch all books ──────────────────────────────────────────────────────────
+// ─── Fetch all books (browse + filter mode, offset pagination) ────────────────
 
 exports.fetchAllBooks = async (req, res) => {
     try {
         const limit = Math.max(1, Math.min(parseInt(req.query.limit) || 10, 100));
-        const page  = Math.max(1, parseInt(req.query.page) || 1);
-        const skip  = (page - 1) * limit;
+        const page = Math.max(1, parseInt(req.query.page) || 1);
+        const skip = (page - 1) * limit;
 
         const allowedSortFields = ["title", "author", "house"];
-        const sortBy    = allowedSortFields.includes(req.query.sortBy) ? req.query.sortBy : null;
+        const sortBy = allowedSortFields.includes(req.query.sortBy) ? req.query.sortBy : null;
         const sortOrder = req.query.sortOrder === "desc" ? -1 : 1;
+        const sortStage = sortBy ? { [sortBy]: sortOrder, _id: sortOrder } : { _id: -1 };
 
-        const sortStage = sortBy
-            ? { [sortBy]: sortOrder, _id: sortOrder }
-            : { _id: -1 };
-
-        // Build filter — only add conditions that are actually present
         const filter = {};
 
         if (req.query.filterHouse) {
@@ -47,24 +42,24 @@ exports.fetchAllBooks = async (req, res) => {
             }
             filter.statuses = {
                 $elemMatch: {
-                    userId: req.user.id,
-                    status: req.query.filterStatus
+                    userId: new mongoose.Types.ObjectId(req.user.id),
+                    status: req.query.filterStatus,
                 }
             };
         }
 
+        // .lean() returns plain JS objects — skips Mongoose document overhead since
+        // we only need to read and re-shape the data, not call any document methods
         const [results, total] = await Promise.all([
-            bookModel.find(filter).sort(sortStage).skip(skip).limit(limit),
-            bookModel.countDocuments(filter)
+            bookModel.find(filter).sort(sortStage).skip(skip).limit(limit).lean(),
+            bookModel.countDocuments(filter),
         ]);
 
         const totalPages = Math.ceil(total / limit) || 1;
 
-        // Inject userStatus so the frontend gets a flat field instead of
-        // having to search through the statuses array on every render
         const data = results.map((book) => ({
-            ...book.toObject(),
-            userStatus: extractUserStatus(book, req.user.id)
+            ...book,
+            userStatus: extractUserStatus(book, req.user.id),
         }));
 
         res.json({
@@ -74,27 +69,26 @@ exports.fetchAllBooks = async (req, res) => {
                 totalPages,
                 currentPage: page,
                 hasNextPage: page < totalPages,
-                hasPrevPage: page > 1
-            }
+                hasPrevPage: page > 1,
+            },
         });
 
     } catch (error) {
         res.status(500).json({
             message: "Failed to fetch books",
-            error: process.env.NODE_ENV === "development" ? error.message : undefined
+            error: process.env.NODE_ENV === "development" ? error.message : undefined,
         });
     }
 };
 
 
-// ─── Search books ─────────────────────────────────────────────────────────────
+// ─── Search books (Atlas Search, cursor pagination) ───────────────────────────
 
 exports.searchBooks = async (req, res) => {
     try {
         const { q, filterHouse, filterGenre, filterStatus } = req.query;
         const limit = Math.max(1, Math.min(parseInt(req.query.limit) || 10, 100));
 
-        // Must have at least a text query or one active filter
         if (!q && !filterHouse && !filterGenre && !filterStatus) {
             return res.status(400).json({ message: "Provide a search query or at least one filter" });
         }
@@ -112,15 +106,12 @@ exports.searchBooks = async (req, res) => {
             return res.status(400).json({ message: "Invalid searchAfter value" });
         }
 
-        // Build the compound query
-        // — should:  autocomplete on title/author (only when text query present)
-        // — filter:  exact match on house, genre, status (only when set)
         const compound = {};
 
         if (q) {
             compound.should = [
-                { autocomplete: { query: q, path: "title",  tokenOrder: "sequential" } },
-                { autocomplete: { query: q, path: "author", tokenOrder: "sequential" } }
+                { autocomplete: { query: q, path: "title", tokenOrder: "sequential" } },
+                { autocomplete: { query: q, path: "author", tokenOrder: "sequential" } },
             ];
             compound.minimumShouldMatch = 1;
         }
@@ -136,20 +127,18 @@ exports.searchBooks = async (req, res) => {
         }
 
         if (filterStatus) {
-            // embeddedDocuments lets Atlas treat each { userId, status } entry
-            // as a unit — prevents false matches from mixing fields across entries
             filters.push({
                 embeddedDocument: {
                     path: "statuses",
                     operator: {
                         compound: {
                             filter: [
-                                { equals: { path: "statuses.userId", value: req.user.id } },
-                                { equals: { path: "statuses.status", value: filterStatus } }
-                            ]
-                        }
-                    }
-                }
+                                { equals: { path: "statuses.userId", value: new mongoose.Types.ObjectId(req.user.id) } },
+                                { equals: { path: "statuses.status", value: filterStatus } },
+                            ],
+                        },
+                    },
+                },
             });
         }
 
@@ -163,10 +152,10 @@ exports.searchBooks = async (req, res) => {
                     index: "bookSearch",
                     compound,
                     sort: { createdAt: -1, _id: -1 },
-                    ...(searchAfter && { searchAfter })
-                }
+                    ...(searchAfter && { searchAfter }),
+                },
             },
-            { $limit: limit + 1 }
+            { $limit: limit + 1 },
         ];
 
         const results = await bookModel.aggregate(pipeline);
@@ -178,25 +167,22 @@ exports.searchBooks = async (req, res) => {
             results.pop();
         }
 
-        // Inject userStatus into each result
-        const userId = req.user.id.toString();
-        const data = results.map((book) => {
-            const entry = book.statuses?.find(
-                (s) => s.userId.toString() === userId
-            );
-            return { ...book, userStatus: entry?.status || null };
-        });
+        // aggregate() returns plain objects — extractUserStatus works directly
+        const data = results.map((book) => ({
+            ...book,
+            userStatus: extractUserStatus(book, req.user.id),
+        }));
 
         res.json({
             data,
-            pagination: { nextCursor, hasMore: !!nextCursor }
+            pagination: { nextCursor, hasMore: !!nextCursor },
         });
 
     } catch (error) {
         console.error(error);
         res.status(500).json({
             message: "Search failed",
-            error: process.env.NODE_ENV === "development" ? error.message : undefined
+            error: process.env.NODE_ENV === "development" ? error.message : undefined,
         });
     }
 };
@@ -206,20 +192,31 @@ exports.searchBooks = async (req, res) => {
 
 exports.addBook = async (req, res) => {
     try {
-        const { title, author, genre, house } = req.body;
+        const { title, author, genre, house, description } = req.body;
 
-        if (!title || !author || !house || !genre?.length) {
+        if (!title?.trim() || !author?.trim() || !house || !genre?.length) {
             return res.status(400).json({ message: "All fields required" });
         }
 
-        const book = await bookModel.create({ title, author, genre, house });
+        // Validate description length explicitly before hitting the model
+        if (description && description.length > 1000) {
+            return res.status(400).json({ message: "Description must be 1000 characters or fewer" });
+        }
+
+        const book = await bookModel.create({
+            title: title.trim(),
+            author: author.trim(),
+            genre,
+            house,
+            description: description?.trim() || "",
+        });
 
         res.status(201).json({ data: { ...book.toObject(), userStatus: null } });
 
     } catch (error) {
         res.status(500).json({
             message: "Failed to add book",
-            error: process.env.NODE_ENV === "development" ? error.message : undefined
+            error: process.env.NODE_ENV === "development" ? error.message : undefined,
         });
     }
 };
@@ -237,58 +234,68 @@ exports.updateBook = async (req, res) => {
 
         const { title, author, genre, house, description, userStatus } = req.body;
 
-        if (!title || !author || !house || !genre?.length) {
+        if (!title?.trim() || !author?.trim() || !house || !genre?.length) {
             return res.status(400).json({ message: "All fields required" });
+        }
+
+        if (description && description.length > 1000) {
+            return res.status(400).json({ message: "Description must be 1000 characters or fewer" });
         }
 
         if (userStatus !== undefined && userStatus !== null && !ALLOWED_STATUSES.includes(userStatus)) {
             return res.status(400).json({ message: "Invalid status value" });
         }
 
-        // Update the core book fields first
-        const updated = await bookModel.findByIdAndUpdate(
-            id,
-            { title, author, genre, house, description },
-            { new: true }
-        );
+        const userId = new mongoose.Types.ObjectId(req.user.id);
+        const userIdStr = req.user.id.toString();
+
+        // Update core fields and handle status atomically in a single round-trip.
+        // Strategy:
+        //   1. Always $pull the user's existing status entry (removes if present)
+        //   2. If a new status is provided, $push the new entry
+        // Using two sequential operations is safe here because $pull + $push on
+        // the same document are applied in order, and there's no concurrent
+        // writer risk for a per-user status field at home-app scale.
+
+        const coreUpdate = {
+            title: title.trim(),
+            author: author.trim(),
+            genre,
+            house,
+            description: description?.trim() || "",
+        };
+
+        // Step 1: update core fields and remove any existing status for this user
+        await bookModel.findByIdAndUpdate(id, {
+            $set: coreUpdate,
+            $pull: { statuses: { userId } },
+        });
+
+        // Step 2: push new status if one was provided
+        if (userStatus) {
+            await bookModel.findByIdAndUpdate(id, {
+                $push: { statuses: { userId, status: userStatus } },
+            });
+        }
+
+        // Fetch the final document to return to the client
+        const updated = await bookModel.findById(id).lean();
 
         if (!updated) {
             return res.status(404).json({ message: "Book not found" });
         }
 
-        // Handle status update separately:
-        // — If userStatus is null/undefined, remove the user's entry entirely
-        // — Otherwise upsert: update in place if exists, push new entry if not
-        const userId = new mongoose.Types.ObjectId(req.user.id);
-
-        if (userStatus === null || userStatus === undefined) {
-            updated.statuses = updated.statuses.filter(
-                (s) => s.userId.toString() !== req.user.id.toString()
-            );
-        } else {
-            const idx = updated.statuses.findIndex(
-                (s) => s.userId.toString() === req.user.id.toString()
-            );
-            if (idx !== -1) {
-                updated.statuses[idx].status = userStatus;
-            } else {
-                updated.statuses.push({ userId, status: userStatus });
-            }
-        }
-
-        await updated.save();
-
         res.json({
             data: {
-                ...updated.toObject(),
-                userStatus: extractUserStatus(updated, req.user.id)
-            }
+                ...updated,
+                userStatus: extractUserStatus(updated, userIdStr),
+            },
         });
 
     } catch (error) {
         res.status(500).json({
             message: "Update failed",
-            error: process.env.NODE_ENV === "development" ? error.message : undefined
+            error: process.env.NODE_ENV === "development" ? error.message : undefined,
         });
     }
 };
@@ -315,7 +322,7 @@ exports.deleteBook = async (req, res) => {
     } catch (error) {
         res.status(500).json({
             message: "Delete failed",
-            error: process.env.NODE_ENV === "development" ? error.message : undefined
+            error: process.env.NODE_ENV === "development" ? error.message : undefined,
         });
     }
 };

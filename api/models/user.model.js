@@ -1,9 +1,6 @@
 const mongoose = require("mongoose");
 const bcrypt = require("bcrypt");
 
-console.log("user.model.js loaded — pre-save has next:", true); // ADD THIS
-
-
 const userSchema = new mongoose.Schema({
     name: { type: String, required: true, trim: true },
     email: {
@@ -30,6 +27,7 @@ const userSchema = new mongoose.Schema({
 }, { timestamps: true, versionKey: false });
 
 userSchema.pre("save", async function (next) {
+    console.log("pre-save hook fired, next type:", typeof next);
     if (!this.isModified("password")) return next();
     this.password = await bcrypt.hash(this.password, 10);
     next();

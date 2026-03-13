@@ -2,10 +2,11 @@ const bookModel = require("../models/book.model.js");
 
 exports.getDashboardStats = async (req, res) => {
     try {
-        // Run all aggregations in parallel for efficiency
-        const [totalBooks, byHouse, byGenre, recentBooks] = await Promise.all([
+        const userId = req.user.id;
 
-            // 1. Total books — FIX 18: use countDocuments() for accuracy
+        const [totalBooks, byHouse, byGenre, recentBooks, byStatus] = await Promise.all([
+
+            // 1. Total books
             bookModel.countDocuments(),
 
             // 2. Books per house
@@ -28,7 +29,15 @@ exports.getDashboardStats = async (req, res) => {
                 .find()
                 .sort({ createdAt: -1 })
                 .limit(5)
-                .select("title author house createdAt")
+                .select("title author house createdAt"),
+
+            // 5. Current user's books by status
+            bookModel.aggregate([
+                { $unwind: "$statuses" },
+                { $match: { "statuses.userId": new (require("mongoose").Types.ObjectId)(userId) } },
+                { $group: { _id: "$statuses.status", count: { $sum: 1 } } },
+                { $project: { _id: 0, status: "$_id", count: 1 } }
+            ])
         ]);
 
         res.json({
@@ -36,7 +45,8 @@ exports.getDashboardStats = async (req, res) => {
                 totalBooks,
                 byHouse,
                 byGenre,
-                recentBooks
+                recentBooks,
+                byStatus
             }
         });
 

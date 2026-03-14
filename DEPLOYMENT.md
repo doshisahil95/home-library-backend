@@ -5,7 +5,7 @@
 | Service | Platform | Cost |
 |---|---|---|
 | Frontend | Vercel | Free |
-| Backend | Railway | ~$0–2/month |
+| Backend | Railway | ~$0–3/month |
 | Database | MongoDB Atlas | Free tier (existing) |
 
 ---
@@ -24,31 +24,38 @@
 
 2. Click **New Project** → **Deploy from GitHub repo** → select `home-library-backend`.
 
+   > **If no repositories appear** — Railway needs permission to access your GitHub repos. Go to [github.com/settings/installations](https://github.com/settings/installations) → find Railway → click **Configure** → under Repository access, select your repos → Save. Then go back to Railway and try again.
+
 3. Railway will auto-detect it as a Node.js app and start deploying.
 
-4. Once deployed, go to your service → **Variables** tab and add every variable below:
+4. Once deployed, go to your service → **Variables** tab and add every variable below. Enter raw values only — do not wrap values in quotes.
 
    | Variable | Value |
    |---|---|
    | `MONGODB_URI` | Your Atlas connection string |
    | `DATABASE_NAME` | Your database name in Atlas |
-   | `APP_NAME` | `home-library` |
-   | `JWT_SECRET` | A long random secret string |
+   | `APP_NAME` | `HomeLibrary` |
+   | `JWT_SECRET` | A random 32+ character string (see below) |
    | `EMAIL_USER` | Your Gmail address |
-   | `EMAIL_PASS` | Your Gmail App Password |
-   | `CORS_ORIGIN` | Leave blank for now — fill in after Step 3 |
+   | `EMAIL_PASS` | Your Gmail App Password (16 chars, no spaces) |
+   | `CORS_ORIGIN` | Leave blank for now — fill in after Step 5 |
    | `NODE_ENV` | `production` |
    | `RATE_LIMIT_WINDOW_MS` | `900000` |
    | `RATE_LIMIT_MAX` | `300` |
    | `PORT` | `3000` |
 
-   > **JWT_SECRET** should be a long, random string. You can generate one by running `node -e "console.log(require('crypto').randomBytes(64).toString('hex'))"` in your terminal.
+   > **JWT_SECRET** must be at least 32 characters — the server will refuse to start if it is shorter. Generate one by running this in your terminal:
+   > ```bash
+   > node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
+   > ```
 
-   > **EMAIL_PASS** must be a Gmail App Password, not your regular Gmail password. Go to Google Account → Security → 2-Step Verification → App passwords to generate one.
+   > **EMAIL_PASS** must be a Gmail App Password, not your regular Gmail password. Go to Google Account → Security → 2-Step Verification → App passwords to generate one. Copy the 16-character password with no spaces.
 
-5. Go to **Settings** → **Networking** → **Generate Domain**.
-   Copy the URL (e.g. `https://home-library-backend.railway.app`).
-   You will need this in the next step.
+5. Go to **Settings** → **Networking** → **Generate Domain** to get your public backend URL (e.g. `https://home-library-backend-production.up.railway.app`). Copy this — you need it in the next steps.
+
+   > **Root Directory** — leave this blank in Railway Settings → Build. Do not set it to `/`.
+
+   > **Spending limit** — go to Railway → Settings → Usage and set a spending limit of $5 to cap costs.
 
 ---
 
@@ -61,7 +68,9 @@
    VITE_API_BASE=http://localhost:3000
    ```
 
-3. Push all changes to GitHub.
+3. Update `vercel.json` — replace `your-railway-domain.up.railway.app` in the `connect-src` directive with your actual Railway URL from Step 2.
+
+4. Push all changes to GitHub.
 
 ---
 
@@ -77,10 +86,11 @@
 
    | Variable | Value |
    |---|---|
-   | `VITE_API_BASE` | Your Railway URL from Step 2, e.g. `https://home-library-backend.railway.app` |
+   | `VITE_API_BASE` | Your Railway URL from Step 2 — must include `https://` prefix |
 
-5. Click **Deploy**. Vercel will give you a URL like `https://home-library-frontend.vercel.app`.
-   Copy this URL — you need it for the next step.
+   > The `https://` prefix is required. Without it, API calls will be treated as relative paths and appended to the Vercel domain instead of going to Railway.
+
+5. Click **Deploy**. Vercel will give you a URL like `https://home-library-frontend.vercel.app`. Copy this — you need it for the next step.
 
 ---
 
@@ -89,7 +99,7 @@
 Now that you have your Vercel URL, go back to Railway:
 
 1. Open your backend service → **Variables** tab.
-2. Set `CORS_ORIGIN` to your Vercel URL:
+2. Set `CORS_ORIGIN` to your Vercel URL (raw value, no quotes):
    ```
    CORS_ORIGIN=https://home-library-frontend.vercel.app
    ```
@@ -97,24 +107,43 @@ Now that you have your Vercel URL, go back to Railway:
 
 ---
 
-## Step 6 — Verify everything works
+## Step 6 — Seed users
+
+Run the user seeding script against your production MongoDB:
+
+```bash
+MONGODB_URI="your-atlas-uri" DATABASE_NAME="homeLibrary" node add-users.js
+```
+
+Or if you have a `.env` file locally:
+
+```bash
+node add-users.js
+```
+
+---
+
+## Step 7 — Verify everything works
 
 1. Open your Vercel URL in a browser.
-2. Log in — you should reach the Dashboard without errors.
-3. Open browser DevTools → **Network** tab — confirm API calls are going to your Railway URL and returning 200 responses.
-4. Test the following to confirm everything is wired up correctly:
+2. Log in with a seeded user — you should reach the Dashboard without errors.
+3. Open browser DevTools → **Network** tab — confirm all API calls are going to your Railway URL over `https://` and returning 200 responses.
+4. Check the response headers on any request — `Strict-Transport-Security` should be present.
+5. Run through this checklist:
    - [ ] Login works
    - [ ] Books page loads
    - [ ] Add / edit / delete a book
-   - [ ] Search works
-   - [ ] Theme toggle saves and persists on refresh
+   - [ ] Search by title or author works
+   - [ ] Filter by house / genre / status works
+   - [ ] Wrong password 5 times — account locks with a message
    - [ ] Forgot password OTP email arrives
+   - [ ] Theme toggle saves and persists on refresh
 
 ---
 
 ## Ongoing deployments
 
-After the initial setup, deploying any change is just three commands:
+After the initial setup, deploying any change is just:
 
 ```bash
 git add .
@@ -122,26 +151,38 @@ git commit -m "describe your change"
 git push
 ```
 
-Both Vercel and Railway watch your GitHub repos and redeploy automatically within about a minute. You never need to touch their dashboards again for routine updates.
+Both Vercel and Railway watch your GitHub repos and redeploy automatically within about a minute.
 
 ---
 
 ## Troubleshooting
 
-**CORS errors in the browser**
-Make sure `CORS_ORIGIN` on Railway exactly matches your Vercel URL — no trailing slash, correct protocol (`https://`).
+**No repositories found in Railway**
+Railway needs GitHub access. Go to [github.com/settings/installations](https://github.com/settings/installations) → Configure Railway → grant access to your repos → Save.
 
-**API calls returning 401 after deploy**
-Check that `JWT_SECRET` is set correctly in Railway. If it was changed after users logged in, existing tokens will be invalid and users will need to log in again.
+**404 on login after deploying frontend**
+Check `VITE_API_BASE` in Vercel — it must include the `https://` prefix. Without it the URL becomes a relative path appended to your Vercel domain. Redeploy after fixing.
+
+**CORS errors in the browser**
+Railway stores env var values literally — make sure there are no quote marks around the value of `CORS_ORIGIN`. It should be the raw URL with no surrounding punctuation.
+
+**500 on login**
+Check Railway logs immediately after the failed attempt. Change `NODE_ENV` to `development` temporarily — the full error will appear in the browser Network tab under the failed request's Response. Common causes:
+- `JWT_SECRET` missing or under 32 characters
+- MongoDB connection string wrong after a password reset
+- Mongoose pre-save hook issue
+
+**API calls going to wrong URL**
+Open DevTools → Network → click the failed request → check the full Request URL. If it shows `https://your-vercel-app.vercel.app/your-railway-domain...` then `VITE_API_BASE` is missing `https://`.
 
 **OTP emails not arriving**
-Check Railway logs for `Email error:` on startup. The most common cause is an incorrect `EMAIL_PASS` — make sure you're using a Gmail App Password, not your regular password.
+Railway blocks outbound SMTP (port 587). If you see `Email server error: Connection timeout` in Railway logs, switch to a transactional email service that sends over HTTPS such as Resend (resend.com — free tier, 3,000 emails/month). Replace the nodemailer block in `login.controller.js` with the Resend SDK.
 
-**Railway shows server running but the app doesn't work**
-Check Railway logs for `Error connecting to MongoDB`. This means the `MONGODB_URI` or `DATABASE_NAME` is incorrect, or your Atlas cluster's IP access list is blocking Railway. In Atlas, go to **Network Access** and add `0.0.0.0/0` to allow all IPs (acceptable for a personal app).
+**Railway shows server running but app doesn't work**
+Check Railway logs for `Error connecting to MongoDB`. This usually means `MONGODB_URI` is wrong or your Atlas cluster's IP access list is blocking Railway. In Atlas → Network Access, add `0.0.0.0/0` to allow all IPs (acceptable for a personal app since MongoDB still requires username and password).
 
 **Vercel build fails**
-Make sure `VITE_API_BASE` is set in Vercel's environment variables before the build runs. Vite embeds these values at build time — they cannot be changed without redeploying.
+Make sure `VITE_API_BASE` is set in Vercel's environment variables before the build runs. Vite embeds these values at build time — changing them requires a redeploy.
 
 ---
 
@@ -154,17 +195,17 @@ Make sure `VITE_API_BASE` is set in Vercel's environment variables before the bu
 | `MONGODB_URI` | MongoDB Atlas connection string |
 | `DATABASE_NAME` | Database name in Atlas |
 | `APP_NAME` | Identifier shown in Atlas monitoring |
-| `JWT_SECRET` | Secret used to sign JWT tokens — keep this private |
+| `JWT_SECRET` | Secret used to sign JWT tokens — must be 32+ characters |
 | `EMAIL_USER` | Gmail address used to send OTP emails |
-| `EMAIL_PASS` | Gmail App Password |
-| `CORS_ORIGIN` | Your Vercel frontend URL |
-| `NODE_ENV` | Set to `production` on Railway |
+| `EMAIL_PASS` | Gmail App Password (16 chars, no spaces) |
+| `CORS_ORIGIN` | Your Vercel frontend URL — raw value, no quotes |
+| `NODE_ENV` | `production` in production, `development` to expose error details |
 | `RATE_LIMIT_WINDOW_MS` | Rate limit window in milliseconds (default: 900000) |
-| `RATE_LIMIT_MAX` | Max requests per window (default: 300) |
+| `RATE_LIMIT_MAX` | Max requests per window for global limiter (default: 300) |
 | `PORT` | Port the server listens on (Railway sets this automatically) |
 
 ### Frontend (Vercel)
 
 | Variable | Description |
 |---|---|
-| `VITE_API_BASE` | Your Railway backend URL |
+| `VITE_API_BASE` | Your Railway backend URL — must include `https://` prefix |

@@ -197,7 +197,7 @@ exports.searchBooks = async (req, res) => {
 
 exports.addBook = async (req, res) => {
     try {
-        const { title, author, genre, house, description } = req.body;
+        const { title, author, genre, house, description, userStatus } = req.body;
 
         if (!title?.trim() || !author?.trim() || !house || !genre?.length) {
             return res.status(400).json({ message: "All fields required" });
@@ -215,7 +215,16 @@ exports.addBook = async (req, res) => {
             description: sanitizeText(description),
         });
 
-        res.status(201).json({ data: { ...book.toObject(), userStatus: null } });
+        // If a status was provided at add time, attach it immediately
+        if (userStatus && ALLOWED_STATUSES.includes(userStatus)) {
+            const userId = new mongoose.Types.ObjectId(req.user.id);
+            await bookModel.findByIdAndUpdate(book._id, {
+                $push: { statuses: { userId, status: userStatus } },
+            });
+        }
+
+        const created = await bookModel.findById(book._id).lean();
+        res.status(201).json({ data: { ...created, userStatus: userStatus || null } });
 
     } catch (error) {
         res.status(500).json({

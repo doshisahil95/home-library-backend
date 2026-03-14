@@ -9,12 +9,21 @@ const app = express();
 
 // ─── Startup validation ───────────────────────────────────────────────────────
 
-if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32) {
-    console.error("FATAL: JWT_SECRET must be set and at least 32 characters");
-    process.exit(1);
-}
-if (!process.env.MONGODB_URI) {
-    console.error("FATAL: MONGODB_URI is not set");
+const REQUIRED_ENV = {
+    MONGODB_URI: { check: (v) => !!v, hint: "MongoDB Atlas connection string" },
+    JWT_SECRET: { check: (v) => v?.length >= 32, hint: "Must be at least 32 characters" },
+    CORS_ORIGIN: { check: (v) => !!v, hint: "Frontend URL e.g. https://your-app.vercel.app" },
+    RESEND_API_KEY: { check: (v) => !!v, hint: "API key from resend.com" },
+};
+
+const missing = Object.entries(REQUIRED_ENV).filter(([key, { check }]) =>
+    !check(process.env[key])
+);
+
+if (missing.length > 0) {
+    missing.forEach(([key, { hint }]) =>
+        console.error(`FATAL: ${key} is not set or invalid — ${hint}`)
+    );
     process.exit(1);
 }
 

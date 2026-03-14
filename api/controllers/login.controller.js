@@ -9,19 +9,16 @@ const userModel = require("../models/user.model.js");
 
 const resend = new Resend(process.env.RESEND_API_KEY);
 
-if (!process.env.RESEND_API_KEY) {
-    console.error("Warning: RESEND_API_KEY is not set — OTP emails will fail");
-} else {
-    console.log("Email client ready (Resend)");
-}
-
 
 // ─── Constants ────────────────────────────────────────────────────────────────
+// All configurable via environment variables — defaults are sensible for
+// a small home app. Override in Railway variables if needed.
 
-const LOGIN_MAX_ATTEMPTS = 5;
-const LOGIN_LOCKOUT_MS = 15 * 60 * 1000; // 15 minutes
-const OTP_MAX_ATTEMPTS = 5;
-const OTP_EXPIRY_MS = 10 * 60 * 1000; // 10 minutes
+const LOGIN_MAX_ATTEMPTS = parseInt(process.env.LOGIN_MAX_ATTEMPTS) || 5;
+const LOGIN_LOCKOUT_MS = parseInt(process.env.LOGIN_LOCKOUT_MS) || 15 * 60 * 1000; // 15 minutes
+const OTP_MAX_ATTEMPTS = parseInt(process.env.OTP_MAX_ATTEMPTS) || 5;
+const OTP_EXPIRY_MS = parseInt(process.env.OTP_EXPIRY_MS) || 10 * 60 * 1000; // 10 minutes
+const JWT_EXPIRY = process.env.JWT_EXPIRY || "4h";
 
 
 /* ═══════════════════════ LOGIN ═══════════════════════════════════════════════ */
@@ -77,7 +74,7 @@ exports.login = async (req, res) => {
         const token = jwt.sign(
             { id: user._id, role: user.role },
             process.env.JWT_SECRET,
-            { expiresIn: "4h" }
+            { expiresIn: JWT_EXPIRY }
         );
 
         return res.status(200).json({
@@ -178,15 +175,18 @@ exports.resetPassword = async (req, res) => {
             return res.status(400).json({ message: "Invalid or expired OTP" });
         }
 
-        // Valid OTP — update password and clear all OTP + lockout state
-        user.password = newPassword; // hashed via pre-save hook
-        user.resetOTP = undefined;
-        user.otpExpiry = undefined;
-        user.otpAttempts = undefined;
-        user.loginAttempts = 0;           // also clear any login lockout
-        user.lockUntil = undefined;
+        // Valid OTP — save the new password first on a clean document so the
+        // pre-save hook fires with only `password` marked as modified.
+        // Then clear OTP and lockout fields atomically via updateOne using
+        // $unset/$set — this bypasses the pre-save hook entirely so the
+        // already-hashed password is never touched again.
+        user.password = newPassword;
+        await user.save(); // pre-save hook hashes newPassword here
 
-        await user.save();
+        await userModel.updateOne({ email }, {
+            $unset: { resetOTP: 1, otpExpiry: 1, otpAttempts: 1, lockUntil: 1 },
+            $set: { loginAttempts: 0 },
+        });
 
         return res.status(200).json({ message: "Password reset successful" });
 

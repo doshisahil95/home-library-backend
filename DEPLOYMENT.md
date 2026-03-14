@@ -133,10 +133,12 @@ node add-users.js
    - [ ] Books page loads
    - [ ] Add / edit / delete a book
    - [ ] Search by title or author works
-   - [ ] Filter by house / genre / status works
+   - [ ] Filter by house / genre / status works — check multi-select genre (AND) works correctly
    - [ ] Wrong password 5 times — account locks with a message
-   - [ ] Forgot password OTP email arrives
+   - [ ] Forgot password — OTP email arrives, resend count shown, back to login link works
    - [ ] Theme toggle saves and persists on refresh
+   - [ ] On mobile — book cards render instead of table, sidebar opens/closes, modals fit screen
+   - [ ] On mobile — filter panel stacks to single column, pagination shows prev/next only
 
 ---
 

@@ -4,6 +4,7 @@ const mongoose = require("mongoose");
 const helmet = require("helmet");
 const cors = require("cors");
 const rateLimit = require("express-rate-limit");
+const morgan = require("morgan");
 
 const app = express();
 
@@ -65,6 +66,13 @@ app.use((req, res, next) => {
     }
     next();
 });
+
+// ─── Request logging (Morgan) ─────────────────────────────────────────────────
+// Logs every request to stdout — Railway captures this automatically.
+// Format: METHOD /path STATUS bytes - Xms  e.g. GET /fetchAllBooks 200 142 - 23.4 ms
+// Using 'combined' in production gives IP + user-agent; 'dev' is cleaner locally.
+
+app.use(morgan(process.env.NODE_ENV === "production" ? "combined" : "dev"));
 
 // ─── Helmet (security headers + HSTS) ────────────────────────────────────────
 

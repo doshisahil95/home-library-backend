@@ -37,7 +37,15 @@ exports.fetchAllBooks = async (req, res) => {
         const filter = {};
 
         if (req.query.filterHouse) filter.house = req.query.filterHouse;
-        if (req.query.filterGenre) filter.genre = req.query.filterGenre;
+
+        // filterGenre may be a single string or an array of strings (repeated params).
+        // $all enforces AND semantics — book must have every selected genre.
+        if (req.query.filterGenre) {
+            const genres = Array.isArray(req.query.filterGenre)
+                ? req.query.filterGenre
+                : [req.query.filterGenre];
+            filter.genre = { $all: genres };
+        }
 
         if (req.query.filterStatus) {
             if (!ALLOWED_STATUSES.includes(req.query.filterStatus)) {
@@ -119,7 +127,13 @@ exports.searchBooks = async (req, res) => {
 
         const filters = [];
         if (filterHouse) filters.push({ equals: { path: "house", value: filterHouse } });
-        if (filterGenre) filters.push({ equals: { path: "genre", value: filterGenre } });
+
+        // Multiple genres use AND semantics — each genre becomes a separate must clause.
+        // Atlas Search $search doesn't support $all, so we push one equals per genre.
+        if (filterGenre) {
+            const genres = Array.isArray(filterGenre) ? filterGenre : [filterGenre];
+            genres.forEach((g) => filters.push({ equals: { path: "genre", value: g } }));
+        }
         if (filterStatus) {
             filters.push({
                 embeddedDocument: {

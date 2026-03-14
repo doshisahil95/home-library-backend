@@ -27,7 +27,7 @@ const userSchema = new mongoose.Schema({
 }, { timestamps: true, versionKey: false });
 
 userSchema.pre("save", async function () {
-    console.log("pre-save hook fired, next type:", typeof next);
+    if (!this.isModified("password")) return;
     this.password = await bcrypt.hash(this.password, 10);
 });
 

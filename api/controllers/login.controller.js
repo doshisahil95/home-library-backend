@@ -1,6 +1,7 @@
 const jwt = require("jsonwebtoken");
 const crypto = require("crypto");
 const { Resend } = require("resend");
+const bcrypt = require("bcrypt");
 
 const userModel = require("../models/user.model.js");
 
@@ -8,7 +9,6 @@ const userModel = require("../models/user.model.js");
 // Resend sends over HTTPS (port 443) — not blocked by Railway unlike SMTP (587)
 
 const resend = new Resend(process.env.RESEND_API_KEY);
-
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 // All configurable via environment variables — defaults are sensible for
@@ -145,8 +145,6 @@ exports.sendResetOTP = async (req, res) => {
 
 exports.resetPassword = async (req, res) => {
     try {
-        console.log("Reset payload:", { email, otp, newPassword: !!newPassword });
-
         const { email, otp, newPassword } = req.body;
 
         if (!email || !otp || !newPassword) {
@@ -177,17 +175,14 @@ exports.resetPassword = async (req, res) => {
             return res.status(400).json({ message: "Invalid or expired OTP" });
         }
 
-        // Valid OTP — save the new password first on a clean document so the
-        // pre-save hook fires with only `password` marked as modified.
-        // Then clear OTP and lockout fields atomically via updateOne using
-        // $unset/$set — this bypasses the pre-save hook entirely so the
-        // already-hashed password is never touched again.
-        user.password = newPassword;
-        await user.save(); // pre-save hook hashes newPassword here
+        // Valid OTP — hash the new password manually so we can do a single
+        // atomic update clearing the OTP fields at the same time.
+        // This avoids the two-step save pattern and any pre-save hook conflicts.
+        const hashedPassword = await bcrypt.hash(newPassword, 10);
 
         await userModel.updateOne({ email }, {
+            $set: { password: hashedPassword, loginAttempts: 0 },
             $unset: { resetOTP: 1, otpExpiry: 1, otpAttempts: 1, lockUntil: 1 },
-            $set: { loginAttempts: 0 },
         });
 
         return res.status(200).json({ message: "Password reset successful" });

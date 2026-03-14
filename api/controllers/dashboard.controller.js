@@ -1,13 +1,13 @@
 const bookModel = require("../models/book.model.js");
 const mongoose = require("mongoose");
+const validate = require("../utils/validate.js");
 
 exports.getDashboardStats = async (req, res) => {
     try {
         // Validate userId before using it in an aggregation — a malformed id
         // would throw inside the pipeline with a confusing error
-        if (!mongoose.Types.ObjectId.isValid(req.user.id)) {
-            return res.status(400).json({ message: "Invalid user ID" });
-        }
+        const idv = validate.validateObjectId(req.user.id);
+        if (!idv.valid) return res.status(400).json({ message: idv.message });
 
         const userId = new mongoose.Types.ObjectId(req.user.id);
 

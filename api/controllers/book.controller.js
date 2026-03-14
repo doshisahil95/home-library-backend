@@ -1,7 +1,6 @@
 const bookModel = require("../models/book.model.js");
 const mongoose = require("mongoose");
-
-const ALLOWED_STATUSES = ["read", "reading", "want to read"];
+const validate = require("../utils/validate.js");
 
 // Strip HTML tags from free-text input to neutralise any injected markup.
 // React escapes output by default so XSS via the browser is already blocked,
@@ -10,6 +9,8 @@ const ALLOWED_STATUSES = ["read", "reading", "want to read"];
 function sanitizeText(str) {
     return str ? str.replace(/<[^>]*>/g, "").trim() : "";
 }
+
+const ALLOWED_STATUSES = ["read", "reading", "want to read"];
 
 // Extracts the current user's status from a book's statuses array and returns
 // it as a plain string (or null). Single source of truth — used by all handlers.
@@ -25,13 +26,10 @@ function extractUserStatus(book, userId) {
 
 exports.fetchAllBooks = async (req, res) => {
     try {
-        const limit = Math.max(1, Math.min(parseInt(req.query.limit) || 10, 100));
-        const page = Math.max(1, parseInt(req.query.page) || 1);
+        const { limit, page } = validate.parsePaginationParams(req.query);
         const skip = (page - 1) * limit;
 
-        const allowedSortFields = ["title", "author", "house"];
-        const sortBy = allowedSortFields.includes(req.query.sortBy) ? req.query.sortBy : null;
-        const sortOrder = req.query.sortOrder === "desc" ? -1 : 1;
+        const { sortBy, sortOrder } = validate.parseSortParams(req.query);
         const sortStage = sortBy ? { [sortBy]: sortOrder, _id: sortOrder } : { _id: -1 };
 
         const filter = {};
@@ -40,17 +38,12 @@ exports.fetchAllBooks = async (req, res) => {
 
         // filterGenre may be a single string or an array of strings (repeated params).
         // $all enforces AND semantics — book must have every selected genre.
-        if (req.query.filterGenre) {
-            const genres = Array.isArray(req.query.filterGenre)
-                ? req.query.filterGenre
-                : [req.query.filterGenre];
-            filter.genre = { $all: genres };
-        }
+        const genres = validate.parseGenreFilter(req.query.filterGenre);
+        if (genres.length) filter.genre = { $all: genres };
 
         if (req.query.filterStatus) {
-            if (!ALLOWED_STATUSES.includes(req.query.filterStatus)) {
-                return res.status(400).json({ message: "Invalid status filter" });
-            }
+            const v = validate.validateStatusFilter(req.query.filterStatus);
+            if (!v.valid) return res.status(400).json({ message: v.message });
             filter.statuses = {
                 $elemMatch: {
                     userId: new mongoose.Types.ObjectId(req.user.id),
@@ -96,24 +89,18 @@ exports.fetchAllBooks = async (req, res) => {
 exports.searchBooks = async (req, res) => {
     try {
         const { q, filterHouse, filterGenre, filterStatus } = req.query;
-        const limit = Math.max(1, Math.min(parseInt(req.query.limit) || 10, 100));
+        const { limit } = validate.parsePaginationParams(req.query);
 
         if (!q && !filterHouse && !filterGenre && !filterStatus) {
             return res.status(400).json({ message: "Provide a search query or at least one filter" });
         }
 
-        if (filterStatus && !ALLOWED_STATUSES.includes(filterStatus)) {
-            return res.status(400).json({ message: "Invalid status filter" });
-        }
+        const sv = validate.validateStatusFilter(filterStatus);
+        if (!sv.valid) return res.status(400).json({ message: sv.message });
 
-        let searchAfter;
-        try {
-            searchAfter = req.query.searchAfter
-                ? JSON.parse(req.query.searchAfter)
-                : undefined;
-        } catch {
-            return res.status(400).json({ message: "Invalid searchAfter value" });
-        }
+        const sa = validate.parseSearchAfter(req.query.searchAfter);
+        if (!sa.valid) return res.status(400).json({ message: sa.message });
+        const searchAfter = sa.value;
 
         const compound = {};
 
@@ -130,10 +117,9 @@ exports.searchBooks = async (req, res) => {
 
         // Multiple genres use AND semantics — each genre becomes a separate must clause.
         // Atlas Search $search doesn't support $all, so we push one equals per genre.
-        if (filterGenre) {
-            const genres = Array.isArray(filterGenre) ? filterGenre : [filterGenre];
-            genres.forEach((g) => filters.push({ equals: { path: "genre", value: g } }));
-        }
+        validate.parseGenreFilter(filterGenre).forEach((g) =>
+            filters.push({ equals: { path: "genre", value: g } })
+        );
         if (filterStatus) {
             filters.push({
                 embeddedDocument: {
@@ -199,13 +185,8 @@ exports.addBook = async (req, res) => {
     try {
         const { title, author, genre, house, description, userStatus } = req.body;
 
-        if (!title?.trim() || !author?.trim() || !house || !genre?.length) {
-            return res.status(400).json({ message: "All fields required" });
-        }
-
-        if (description && description.length > 1000) {
-            return res.status(400).json({ message: "Description must be 1000 characters or fewer" });
-        }
+        const av = validate.validateBookBody({ title, author, house, genre, description, userStatus });
+        if (!av.valid) return res.status(400).json({ message: av.message });
 
         const book = await bookModel.create({
             title: sanitizeText(title),
@@ -241,23 +222,13 @@ exports.updateBook = async (req, res) => {
     try {
         const { id } = req.params;
 
-        if (!mongoose.Types.ObjectId.isValid(id)) {
-            return res.status(400).json({ message: "Invalid book ID" });
-        }
+        const idv = validate.validateObjectId(id);
+        if (!idv.valid) return res.status(400).json({ message: idv.message });
 
         const { title, author, genre, house, description, userStatus } = req.body;
 
-        if (!title?.trim() || !author?.trim() || !house || !genre?.length) {
-            return res.status(400).json({ message: "All fields required" });
-        }
-
-        if (description && description.length > 1000) {
-            return res.status(400).json({ message: "Description must be 1000 characters or fewer" });
-        }
-
-        if (userStatus !== undefined && userStatus !== null && !ALLOWED_STATUSES.includes(userStatus)) {
-            return res.status(400).json({ message: "Invalid status value" });
-        }
+        const uv = validate.validateBookBody({ title, author, house, genre, description, userStatus });
+        if (!uv.valid) return res.status(400).json({ message: uv.message });
 
         const userId = new mongoose.Types.ObjectId(req.user.id);
         const userIdStr = req.user.id.toString();
@@ -310,9 +281,8 @@ exports.deleteBook = async (req, res) => {
     try {
         const { id } = req.params;
 
-        if (!mongoose.Types.ObjectId.isValid(id)) {
-            return res.status(400).json({ message: "Invalid book ID" });
-        }
+        const dv = validate.validateObjectId(id);
+        if (!dv.valid) return res.status(400).json({ message: dv.message });
 
         const deleted = await bookModel.findByIdAndDelete(id);
 

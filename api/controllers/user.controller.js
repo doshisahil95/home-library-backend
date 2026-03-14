@@ -1,13 +1,15 @@
 const userModel = require("../models/user.model.js");
+const validate = require("../utils/validate.js");
 
+// FIX 20: Renamed from updateSettings to updateTheme to be accurate about what it does
 exports.updateTheme = async (req, res) => {
     try {
         const { theme } = req.body;
 
-        if (!["light", "dark"].includes(theme)) {
-            return res.status(400).json({ message: "Invalid theme value" });
-        }
+        const tv = validate.validateTheme({ theme });
+        if (!tv.valid) return res.status(400).json({ message: tv.message });
 
+        // FIX 21: Check that user still exists before accessing result
         const user = await userModel.findByIdAndUpdate(
             req.user.id,
             { theme },

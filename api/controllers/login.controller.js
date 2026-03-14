@@ -1,14 +1,15 @@
 const jwt = require("jsonwebtoken");
 const crypto = require("crypto");
 const { Resend } = require("resend");
-const bcrypt = require("bcrypt");
 
 const userModel = require("../models/user.model.js");
+const validate = require("../utils/validate.js");
 
 // ─── Mail config ──────────────────────────────────────────────────────────────
 // Resend sends over HTTPS (port 443) — not blocked by Railway unlike SMTP (587)
 
 const resend = new Resend(process.env.RESEND_API_KEY);
+
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 // All configurable via environment variables — defaults are sensible for
@@ -27,9 +28,8 @@ exports.login = async (req, res) => {
     try {
         const { email, password } = req.body;
 
-        if (!email || !password) {
-            return res.status(400).json({ message: "Email and password are required" });
-        }
+        const lv = validate.validateLoginBody({ email, password });
+        if (!lv.valid) return res.status(400).json({ message: lv.message });
 
         const user = await userModel.findOne({ email });
 
@@ -105,9 +105,8 @@ exports.sendResetOTP = async (req, res) => {
         const { email } = req.body;
 
         // Always return 200 — prevents email enumeration
-        if (!email) {
-            return res.status(200).json({ message: "OTP sent successfully" });
-        }
+        const ev = validate.validateEmail({ email });
+        if (!ev.valid) return res.status(200).json({ message: "OTP sent successfully" });
 
         const user = await userModel.findOne({ email });
 
@@ -147,9 +146,8 @@ exports.resetPassword = async (req, res) => {
     try {
         const { email, otp, newPassword } = req.body;
 
-        if (!email || !otp || !newPassword) {
-            return res.status(400).json({ message: "Invalid or expired OTP" });
-        }
+        const rv = validate.validateOTPBody({ email, otp, newPassword });
+        if (!rv.valid) return res.status(400).json({ message: "Invalid or expired OTP" });
 
         const user = await userModel.findOne({ email });
 
@@ -178,6 +176,7 @@ exports.resetPassword = async (req, res) => {
         // Valid OTP — hash the new password manually so we can do a single
         // atomic update clearing the OTP fields at the same time.
         // This avoids the two-step save pattern and any pre-save hook conflicts.
+        const bcrypt = require("bcrypt");
         const hashedPassword = await bcrypt.hash(newPassword, 10);
 
         await userModel.updateOne({ email }, {

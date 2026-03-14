@@ -1,25 +1,19 @@
 const jwt = require("jsonwebtoken");
 const crypto = require("crypto");
-const nodemailer = require("nodemailer");
+const { Resend } = require("resend");
 
 const userModel = require("../models/user.model.js");
 
 // ─── Mail config ──────────────────────────────────────────────────────────────
+// Resend sends over HTTPS (port 443) — not blocked by Railway unlike SMTP (587)
 
-const transporter = nodemailer.createTransport({
-    host: "smtp.gmail.com",
-    port: 587,
-    secure: false,
-    auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS,
-    },
-});
+const resend = new Resend(process.env.RESEND_API_KEY);
 
-transporter.verify((err) => {
-    if (err) console.error("Email server error:", err.message);
-    else console.log("Email server ready");
-});
+if (!process.env.RESEND_API_KEY) {
+    console.error("Warning: RESEND_API_KEY is not set — OTP emails will fail");
+} else {
+    console.log("Email client ready (Resend)");
+}
 
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -132,7 +126,8 @@ exports.sendResetOTP = async (req, res) => {
 
         await user.save();
 
-        await transporter.sendMail({
+        await resend.emails.send({
+            from: "Home Library <onboarding@resend.dev>",
             to: email,
             subject: "Password Reset OTP",
             text: `Your OTP is: ${otp}\n\nThis code expires in 10 minutes. Do not share it with anyone.`,

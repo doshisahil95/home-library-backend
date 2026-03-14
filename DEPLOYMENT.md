@@ -36,8 +36,7 @@
    | `DATABASE_NAME` | Your database name in Atlas |
    | `APP_NAME` | `HomeLibrary` |
    | `JWT_SECRET` | A random 32+ character string (see below) |
-   | `EMAIL_USER` | Your Gmail address |
-   | `EMAIL_PASS` | Your Gmail App Password (16 chars, no spaces) |
+   | `RESEND_API_KEY` | Your Resend API key (see below) |
    | `CORS_ORIGIN` | Leave blank for now — fill in after Step 5 |
    | `NODE_ENV` | `production` |
    | `RATE_LIMIT_WINDOW_MS` | `900000` |
@@ -49,7 +48,7 @@
    > node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
    > ```
 
-   > **EMAIL_PASS** must be a Gmail App Password, not your regular Gmail password. Go to Google Account → Security → 2-Step Verification → App passwords to generate one. Copy the 16-character password with no spaces.
+   > **RESEND_API_KEY** — sign up for a free account at [resend.com](https://resend.com) → API Keys → Create API Key → name it `HomeLibrary` → copy the key. The free tier allows 3,000 emails/month which is more than enough. The key is only shown once so copy it immediately.
 
 5. Go to **Settings** → **Networking** → **Generate Domain** to get your public backend URL (e.g. `https://home-library-backend-production.up.railway.app`). Copy this — you need it in the next steps.
 
@@ -176,7 +175,7 @@ Check Railway logs immediately after the failed attempt. Change `NODE_ENV` to `d
 Open DevTools → Network → click the failed request → check the full Request URL. If it shows `https://your-vercel-app.vercel.app/your-railway-domain...` then `VITE_API_BASE` is missing `https://`.
 
 **OTP emails not arriving**
-Railway blocks outbound SMTP (port 587). If you see `Email server error: Connection timeout` in Railway logs, switch to a transactional email service that sends over HTTPS such as Resend (resend.com — free tier, 3,000 emails/month). Replace the nodemailer block in `login.controller.js` with the Resend SDK.
+Check Railway logs for `Warning: RESEND_API_KEY is not set`. If the key is set correctly, log into your Resend dashboard and check the **Emails** section — it shows delivery status for every email sent. If emails are being sent but not arriving, check your spam folder.
 
 **Railway shows server running but app doesn't work**
 Check Railway logs for `Error connecting to MongoDB`. This usually means `MONGODB_URI` is wrong or your Atlas cluster's IP access list is blocking Railway. In Atlas → Network Access, add `0.0.0.0/0` to allow all IPs (acceptable for a personal app since MongoDB still requires username and password).
@@ -196,8 +195,7 @@ Make sure `VITE_API_BASE` is set in Vercel's environment variables before the bu
 | `DATABASE_NAME` | Database name in Atlas |
 | `APP_NAME` | Identifier shown in Atlas monitoring |
 | `JWT_SECRET` | Secret used to sign JWT tokens — must be 32+ characters |
-| `EMAIL_USER` | Gmail address used to send OTP emails |
-| `EMAIL_PASS` | Gmail App Password (16 chars, no spaces) |
+| `RESEND_API_KEY` | API key from resend.com for sending OTP emails |
 | `CORS_ORIGIN` | Your Vercel frontend URL — raw value, no quotes |
 | `NODE_ENV` | `production` in production, `development` to expose error details |
 | `RATE_LIMIT_WINDOW_MS` | Rate limit window in milliseconds (default: 900000) |

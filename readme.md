@@ -31,7 +31,7 @@ REST API for the Home Library app. Built with Node.js, Express, and MongoDB Atla
 | ODM | Mongoose |
 | Authentication | JSON Web Tokens (jsonwebtoken) |
 | Password hashing | bcrypt |
-| Email | Nodemailer (Gmail SMTP) |
+| Email | Resend |
 | Security | Helmet, express-rate-limit, cors |
 
 ---
@@ -67,7 +67,7 @@ home-library-backend/
 ### Prerequisites
 - Node.js 18+
 - A MongoDB Atlas cluster with a database and a `bookSearch` Atlas Search index on the books collection
-- A Gmail account with an App Password for sending OTP emails
+- A free Resend account for sending OTP emails (resend.com)
 
 ### Steps
 
@@ -107,8 +107,7 @@ Create a `.env` file in the project root with the following variables. Never com
 | `DATABASE_NAME` | Database name in Atlas | `homeLibrary` |
 | `APP_NAME` | Identifier shown in Atlas monitoring | `HomeLibrary` |
 | `JWT_SECRET` | Secret used to sign JWT tokens — must be 32+ characters | `a8f3k...` |
-| `EMAIL_USER` | Gmail address used to send OTP emails | `you@gmail.com` |
-| `EMAIL_PASS` | Gmail App Password (not your regular password) | `xxxx xxxx xxxx xxxx` |
+| `RESEND_API_KEY` | API key from resend.com for sending OTP emails | `re_xxxxxxxxxx` |
 | `CORS_ORIGIN` | Allowed frontend origin — comma-separated for multiple | `http://localhost:5173` |
 | `PORT` | Port the server listens on | `3000` |
 | `NODE_ENV` | Environment — controls error detail in responses | `development` |
@@ -123,14 +122,14 @@ node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
 
 The server will refuse to start if `JWT_SECRET` is missing or shorter than 32 characters.
 
-### Gmail App Password Setup
+### Resend API Key Setup
 
-Standard Gmail passwords won't work with Nodemailer. You need to generate an App Password:
+1. Go to [resend.com](https://resend.com) and sign up for a free account (3,000 emails/month free).
+2. Go to **API Keys** → **Create API Key**.
+3. Name it `HomeLibrary`, keep default permissions (Send access only).
+4. Copy the key — it is only shown once. Use it as `RESEND_API_KEY`.
 
-1. Go to your Google Account → Security → 2-Step Verification (must be enabled).
-2. At the bottom of that page, click **App passwords**.
-3. Create a new app password, name it anything (e.g. "Home Library").
-4. Copy the 16-character password (no spaces) and use it as `EMAIL_PASS`.
+OTP emails are sent from `onboarding@resend.dev` (Resend's shared sending domain). No domain verification is required.
 
 ---
 
@@ -228,8 +227,7 @@ MONGODB_URI          = mongodb+srv://...
 DATABASE_NAME        = homeLibrary
 APP_NAME             = HomeLibrary
 JWT_SECRET           = (32+ char random hex)
-EMAIL_USER           = you@gmail.com
-EMAIL_PASS           = (Gmail app password, 16 chars no spaces)
+RESEND_API_KEY       = re_xxxxxxxxxx
 CORS_ORIGIN          = https://your-app.vercel.app
 NODE_ENV             = production
 RATE_LIMIT_WINDOW_MS = 900000

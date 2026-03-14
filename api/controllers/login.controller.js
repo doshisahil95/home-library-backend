@@ -145,6 +145,8 @@ exports.sendResetOTP = async (req, res) => {
 
 exports.resetPassword = async (req, res) => {
     try {
+        console.log("Reset payload:", { email, otp, newPassword: !!newPassword });
+
         const { email, otp, newPassword } = req.body;
 
         if (!email || !otp || !newPassword) {

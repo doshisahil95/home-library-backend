@@ -1,17 +1,8 @@
 const bookModel = require("../models/book.model.js");
-const mongoose = require("mongoose");
-const validate = require("../utils/validate.js");
 
 exports.getDashboardStats = async (req, res) => {
     try {
-        // Validate userId before using it in an aggregation — a malformed id
-        // would throw inside the pipeline with a confusing error
-        const idv = validate.validateObjectId(req.user.id);
-        if (!idv.valid) return res.status(400).json({ message: idv.message });
-
-        const userId = new mongoose.Types.ObjectId(req.user.id);
-
-        const [totalBooks, byHouse, byGenre, recentBooks, byStatus] = await Promise.all([
+        const [totalBooks, byHouse, byGenre, recentBooks] = await Promise.all([
 
             // 1. Total books
             bookModel.countDocuments(),
@@ -39,19 +30,11 @@ exports.getDashboardStats = async (req, res) => {
                 .sort({ createdAt: -1 })
                 .limit(5)
                 .select("title author house createdAt")
-                .lean(),
-
-            // 5. Current user's books by reading status
-            bookModel.aggregate([
-                { $unwind: "$statuses" },
-                { $match: { "statuses.userId": userId } },
-                { $group: { _id: "$statuses.status", count: { $sum: 1 } } },
-                { $project: { _id: 0, status: "$_id", count: 1 } },
-            ]),
+                .lean()
         ]);
 
         res.json({
-            data: { totalBooks, byHouse, byGenre, recentBooks, byStatus },
+            data: { totalBooks, byHouse, byGenre, recentBooks },
         });
 
     } catch (error) {

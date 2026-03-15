@@ -26,4 +26,5 @@ module.exports = function (app) {
 
     // ─── User (protected) ──────────────────────────────────────────────────
     app.patch("/users/theme", auth, userController.updateTheme);
+    app.get("/discover", auth, userController.getDiscoverData);
 };

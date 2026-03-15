@@ -56,12 +56,19 @@ exports.fetchAllBooks = async (req, res) => {
         if (req.query.filterStatus) {
             const v = validate.validateStatusFilter(req.query.filterStatus);
             if (!v.valid) return res.status(400).json({ message: v.message });
-            filter.statuses = {
-                $elemMatch: {
-                    userId: new mongoose.Types.ObjectId(req.user.id),
-                    status: req.query.filterStatus,
-                },
-            };
+            if (req.query.filterStatus === "no-status") {
+                // Books where the current user has no status entry at all
+                filter.statuses = {
+                    $not: { $elemMatch: { userId: new mongoose.Types.ObjectId(req.user.id) } },
+                };
+            } else {
+                filter.statuses = {
+                    $elemMatch: {
+                        userId: new mongoose.Types.ObjectId(req.user.id),
+                        status: req.query.filterStatus,
+                    },
+                };
+            }
         }
 
         const [results, total] = await Promise.all([
@@ -109,6 +116,12 @@ exports.searchBooks = async (req, res) => {
 
         const sv = validate.validateStatusFilter(filterStatus);
         if (!sv.valid) return res.status(400).json({ message: sv.message });
+
+        // "no-status" filter uses a $not/$elemMatch query which isn't supported
+        // in Atlas Search — it only works in the Mongoose browse path
+        if (filterStatus === "no-status") {
+            return res.status(400).json({ message: "The 'No status' filter cannot be combined with a text search" });
+        }
 
         const sa = validate.parseSearchAfter(req.query.searchAfter);
         if (!sa.valid) return res.status(400).json({ message: sa.message });

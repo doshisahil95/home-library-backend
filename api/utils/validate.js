@@ -54,7 +54,8 @@ exports.validateBookBody = ({ title, author, house, genre, description, userStat
 };
 
 exports.validateStatusFilter = (status) => {
-    if (status && !ALLOWED_STATUSES.includes(status)) return fail("Invalid status filter");
+    if (status && status !== "no-status" && !ALLOWED_STATUSES.includes(status))
+        return fail("Invalid status filter");
     return ok;
 };
 

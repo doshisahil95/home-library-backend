@@ -124,3 +124,54 @@ exports.validateTheme = ({ theme }) => {
     if (!ALLOWED_THEMES.includes(theme)) return fail("Invalid theme value");
     return ok;
 };
+
+// ─── Reading dates + rating ───────────────────────────────────────────────────
+
+exports.validateRating = (rating) => {
+    if (rating === undefined || rating === null) return ok;
+    const n = Number(rating);
+    if (!Number.isInteger(n) || n < 1 || n > 5) return fail("Rating must be a whole number between 1 and 5");
+    return ok;
+};
+
+exports.validateReadingDates = ({ startedAt, finishedAt }) => {
+    if (startedAt !== undefined && startedAt !== null) {
+        const d = new Date(startedAt);
+        if (isNaN(d.getTime())) return fail("Invalid started date");
+        if (d > new Date()) return fail("Started date cannot be in the future");
+    }
+    if (finishedAt !== undefined && finishedAt !== null) {
+        const d = new Date(finishedAt);
+        if (isNaN(d.getTime())) return fail("Invalid finished date");
+        if (d > new Date()) return fail("Finished date cannot be in the future");
+    }
+    if (startedAt && finishedAt && new Date(finishedAt) < new Date(startedAt)) {
+        return fail("Finished date cannot be before started date");
+    }
+    return ok;
+};
+
+// ─── Status transition ────────────────────────────────────────────────────────
+// Enforces one-way progression: null → want to read → reading → read
+// Users can always clear their status (set to null).
+// Backwards transitions are not allowed once dates have meaning.
+
+const VALID_TRANSITIONS = {
+    null: ["want to read", "reading", "read"],
+    "want to read": ["reading", "read"],
+    "reading": ["read"],
+    "read": [],
+};
+
+exports.validateStatusTransition = (currentStatus, newStatus) => {
+    // Clearing status is always allowed
+    if (!newStatus) return ok;
+    // No change is always allowed
+    if (currentStatus === newStatus) return ok;
+
+    const allowed = VALID_TRANSITIONS[currentStatus ?? null] ?? [];
+    if (!allowed.includes(newStatus)) {
+        return fail(`Cannot change status from "${currentStatus || "none"}" to "${newStatus}"`);
+    }
+    return ok;
+};

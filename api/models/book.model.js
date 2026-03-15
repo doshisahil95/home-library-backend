@@ -2,7 +2,12 @@ const mongoose = require("mongoose");
 
 const statusSchema = new mongoose.Schema({
     userId: { type: mongoose.Schema.Types.ObjectId, required: true, ref: "User" },
-    status: { type: String, enum: ["read", "reading", "want to read"], required: true }
+    status: { type: String, enum: ["read", "reading", "want to read"], required: true },
+    startedAt: { type: Date },
+    startedAtLocked: { type: Boolean, default: false },
+    finishedAt: { type: Date },
+    finishedAtLocked: { type: Boolean, default: false },
+    rating: { type: Number, min: 1, max: 5 },
 }, { _id: false });
 
 const bookSchema = new mongoose.Schema({
@@ -19,7 +24,7 @@ const bookSchema = new mongoose.Schema({
 bookSchema.index({ title: 1, _id: 1 });
 bookSchema.index({ author: 1, _id: 1 });
 bookSchema.index({ house: 1, _id: 1 });
-bookSchema.index({ createdAt: 1 });
+bookSchema.index({ createdAt: -1 });
 
 // Index for status filtering in fetchAllBooks — covers the $elemMatch query
 // on { userId, status } so Mongoose doesn't scan every book's statuses array

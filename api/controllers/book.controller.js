@@ -12,13 +12,25 @@ function sanitizeText(str) {
 
 const ALLOWED_STATUSES = ["read", "reading", "want to read"];
 
-// Extracts the current user's status from a book's statuses array and returns
-// it as a plain string (or null). Single source of truth — used by all handlers.
+// Extracts the current user's full status entry from a book's statuses array.
+// Returns a flat object with status, dates, locks and rating — or nulls if not set.
+// Single source of truth used by all fetch handlers.
 function extractUserStatus(book, userId) {
     const entry = (book.statuses || []).find(
         (s) => s.userId.toString() === userId.toString()
     );
-    return entry?.status || null;
+    if (!entry) return {
+        userStatus: null, startedAt: null, startedAtLocked: false,
+        finishedAt: null, finishedAtLocked: false, rating: null,
+    };
+    return {
+        userStatus: entry.status,
+        startedAt: entry.startedAt || null,
+        startedAtLocked: entry.startedAtLocked || false,
+        finishedAt: entry.finishedAt || null,
+        finishedAtLocked: entry.finishedAtLocked || false,
+        rating: entry.rating ?? null,
+    };
 }
 
 
@@ -61,7 +73,7 @@ exports.fetchAllBooks = async (req, res) => {
 
         const data = results.map((book) => ({
             ...book,
-            userStatus: extractUserStatus(book, req.user.id),
+            ...extractUserStatus(book, req.user.id),
         }));
 
         res.json({
@@ -161,7 +173,7 @@ exports.searchBooks = async (req, res) => {
 
         const data = results.map((book) => ({
             ...book,
-            userStatus: extractUserStatus(book, req.user.id),
+            ...extractUserStatus(book, req.user.id),
         }));
 
         res.json({
@@ -196,16 +208,34 @@ exports.addBook = async (req, res) => {
             description: sanitizeText(description),
         });
 
-        // If a status was provided at add time, attach it immediately
+        // If a status was provided at add time, build the full status entry
         if (userStatus && ALLOWED_STATUSES.includes(userStatus)) {
             const userId = new mongoose.Types.ObjectId(req.user.id);
+            const { startedAt, finishedAt, rating } = req.body;
+
+            const dv = validate.validateReadingDates({ startedAt, finishedAt });
+            if (!dv.valid) return res.status(400).json({ message: dv.message });
+            const rv = validate.validateRating(rating);
+            if (!rv.valid) return res.status(400).json({ message: rv.message });
+
+            const now = new Date();
+            const statusEntry = { userId, status: userStatus };
+
+            if (userStatus === "reading" || userStatus === "read") {
+                statusEntry.startedAt = startedAt ? new Date(startedAt) : now;
+            }
+            if (userStatus === "read") {
+                statusEntry.finishedAt = finishedAt ? new Date(finishedAt) : now;
+                if (rating !== undefined && rating !== null) statusEntry.rating = Number(rating);
+            }
+
             await bookModel.findByIdAndUpdate(book._id, {
-                $push: { statuses: { userId, status: userStatus } },
+                $push: { statuses: statusEntry },
             });
         }
 
         const created = await bookModel.findById(book._id).lean();
-        res.status(201).json({ data: { ...created, userStatus: userStatus || null } });
+        res.status(201).json({ data: { ...created, ...extractUserStatus(created, req.user.id) } });
 
     } catch (error) {
         res.status(500).json({
@@ -233,6 +263,13 @@ exports.updateBook = async (req, res) => {
         const userId = new mongoose.Types.ObjectId(req.user.id);
         const userIdStr = req.user.id.toString();
 
+        const { startedAt, finishedAt, rating } = req.body;
+
+        const dv = validate.validateReadingDates({ startedAt, finishedAt });
+        if (!dv.valid) return res.status(400).json({ message: dv.message });
+        const rv = validate.validateRating(rating);
+        if (!rv.valid) return res.status(400).json({ message: rv.message });
+
         const coreUpdate = {
             title: sanitizeText(title),
             author: sanitizeText(author),
@@ -241,28 +278,91 @@ exports.updateBook = async (req, res) => {
             description: sanitizeText(description),
         };
 
-        // Atomic status update — $pull existing entry, then $push new one if set
+        // Read existing status entry before pulling — needed for lock checks
+        // and to preserve dates/rating not being changed in this request
+        const existing = await bookModel.findById(id).lean();
+        if (!existing) return res.status(404).json({ message: "Book not found" });
+
+        const existingEntry = (existing.statuses || []).find(
+            (s) => s.userId.toString() === userIdStr
+        );
+
+        // Enforce one-way status progression
+        const currentStatus = existingEntry?.status || null;
+        const tv = validate.validateStatusTransition(currentStatus, userStatus);
+        if (!tv.valid) return res.status(400).json({ message: tv.message });
+
+        // Build new status entry respecting lock flags, auto-setting dates,
+        // and preserving existing values when no new value is provided
+        let statusEntry = null;
+        if (userStatus) {
+            const now = new Date();
+            statusEntry = { userId, status: userStatus };
+
+            if (userStatus === "reading" || userStatus === "read") {
+                if (existingEntry?.startedAtLocked) {
+                    // Already locked — preserve, ignore incoming value
+                    statusEntry.startedAt = existingEntry.startedAt;
+                    statusEntry.startedAtLocked = true;
+                } else if (startedAt !== undefined && startedAt !== null) {
+                    // One-time manual edit — save and lock permanently
+                    statusEntry.startedAt = new Date(startedAt);
+                    statusEntry.startedAtLocked = true;
+                } else if (existingEntry?.startedAt) {
+                    // No new value — preserve existing unlocked date
+                    statusEntry.startedAt = existingEntry.startedAt;
+                    statusEntry.startedAtLocked = false;
+                } else {
+                    // First time reaching this status — auto-set
+                    statusEntry.startedAt = now;
+                    statusEntry.startedAtLocked = false;
+                }
+            }
+
+            if (userStatus === "read") {
+                if (existingEntry?.finishedAtLocked) {
+                    statusEntry.finishedAt = existingEntry.finishedAt;
+                    statusEntry.finishedAtLocked = true;
+                } else if (finishedAt !== undefined && finishedAt !== null) {
+                    statusEntry.finishedAt = new Date(finishedAt);
+                    statusEntry.finishedAtLocked = true;
+                } else if (existingEntry?.finishedAt) {
+                    statusEntry.finishedAt = existingEntry.finishedAt;
+                    statusEntry.finishedAtLocked = false;
+                } else {
+                    statusEntry.finishedAt = now;
+                    statusEntry.finishedAtLocked = false;
+                }
+
+                // Rating — only on read books, locked once set
+                if (existingEntry?.rating !== undefined && existingEntry?.rating !== null) {
+                    // Already set — preserve, ignore incoming value
+                    statusEntry.rating = existingEntry.rating;
+                } else if (rating !== undefined && rating !== null) {
+                    statusEntry.rating = Number(rating);
+                }
+            }
+        }
+
+        // Atomic: update core fields and pull old status entry
         await bookModel.findByIdAndUpdate(id, {
             $set: coreUpdate,
             $pull: { statuses: { userId } },
         });
 
-        if (userStatus) {
+        // Push new status entry if status is set
+        if (statusEntry) {
             await bookModel.findByIdAndUpdate(id, {
-                $push: { statuses: { userId, status: userStatus } },
+                $push: { statuses: statusEntry },
             });
         }
 
         const updated = await bookModel.findById(id).lean();
 
-        if (!updated) {
-            return res.status(404).json({ message: "Book not found" });
-        }
-
         res.json({
             data: {
                 ...updated,
-                userStatus: extractUserStatus(updated, userIdStr),
+                ...extractUserStatus(updated, userIdStr),
             },
         });
 

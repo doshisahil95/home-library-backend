@@ -21,6 +21,21 @@ const OTP_MAX_ATTEMPTS = parseInt(process.env.OTP_MAX_ATTEMPTS) || 5;
 const OTP_EXPIRY_MS = parseInt(process.env.OTP_EXPIRY_MS) || 10 * 60 * 1000; // 10 minutes
 const JWT_EXPIRY = process.env.JWT_EXPIRY || "4h";
 
+// ─── Cookie helper ────────────────────────────────────────────────────────────
+// SameSite=None + Secure required for cross-origin (Vercel → Railway) in prod.
+// SameSite=Lax in dev since the Vite proxy makes it same-origin.
+
+function cookieOptions() {
+    const isProd = process.env.NODE_ENV === "production";
+    return {
+        httpOnly: true,
+        secure: isProd,
+        sameSite: isProd ? "none" : "lax",
+        maxAge: 4 * 60 * 60 * 1000, // 4 hours in ms
+        path: "/",
+    };
+}
+
 
 /* ═══════════════════════ LOGIN ═══════════════════════════════════════════════ */
 
@@ -77,9 +92,11 @@ exports.login = async (req, res) => {
             { expiresIn: JWT_EXPIRY }
         );
 
+        // Set token in HttpOnly cookie — not accessible to JS, safe from XSS
+        res.cookie("token", token, cookieOptions());
+
         return res.status(200).json({
             message: "Login successful",
-            token,
             user: {
                 id: user._id,
                 name: user.name,
@@ -192,4 +209,49 @@ exports.resetPassword = async (req, res) => {
             error: process.env.NODE_ENV === "development" ? error.message : undefined,
         });
     }
+};
+
+
+/* ═══════════════════════ GET ME ════════════════════════════════════════════ */
+// Called by ProtectedRoute on mount and every 5 minutes.
+// Returns session validity and ms remaining so the frontend can show a warning.
+
+exports.getMe = (req, res) => {
+    // Token already verified by auth middleware — req.user is populated
+    // Re-read the cookie to get the raw exp value for time-remaining calc
+    try {
+        const jwt = require("jsonwebtoken");
+        const decoded = jwt.verify(req.cookies.token, process.env.JWT_SECRET);
+        const msRemaining = decoded.exp * 1000 - Date.now();
+        return res.json({ valid: true, msRemaining });
+    } catch {
+        return res.status(401).json({ valid: false, msRemaining: 0 });
+    }
+};
+
+
+/* ═══════════════════════ REFRESH TOKEN ════════════════════════════════════ */
+// Issues a fresh 4-hour token when the user clicks "Stay logged in".
+// Only callable while the current token is still valid (auth middleware gates it).
+
+exports.refreshToken = (req, res) => {
+    try {
+        const token = jwt.sign(
+            { id: req.user.id, role: req.user.role },
+            process.env.JWT_SECRET,
+            { expiresIn: JWT_EXPIRY }
+        );
+        res.cookie("token", token, cookieOptions());
+        return res.json({ message: "Session extended" });
+    } catch {
+        return res.status(500).json({ message: "Failed to refresh session" });
+    }
+};
+
+
+/* ═══════════════════════ LOGOUT ════════════════════════════════════════════ */
+
+exports.logout = (req, res) => {
+    res.clearCookie("token", { path: "/" });
+    return res.json({ message: "Logged out" });
 };

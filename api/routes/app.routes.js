@@ -13,6 +13,11 @@ module.exports = function (app) {
     app.post("/login", authLimiter, loginController.login);
     app.post("/send-reset-otp", authLimiter, loginController.sendResetOTP);
     app.post("/reset-password", authLimiter, loginController.resetPassword);
+    app.post("/logout", loginController.logout);
+
+    // ─── Session (protected) ───────────────────────────────────────────────
+    app.get("/me", auth, loginController.getMe);
+    app.post("/refresh-token", auth, loginController.refreshToken);
 
     // ─── Books (protected) ─────────────────────────────────────────────────
     app.get("/fetchAllBooks", auth, bookController.fetchAllBooks);

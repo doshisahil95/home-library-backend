@@ -5,6 +5,7 @@ const helmet = require("helmet");
 const cors = require("cors");
 const rateLimit = require("express-rate-limit");
 const morgan = require("morgan");
+const cookieParser = require("cookie-parser");
 
 const app = express();
 
@@ -98,9 +99,13 @@ app.use(cors({
         callback(null, false); // reject — browser receives a proper CORS block
     },
     methods: ["GET", "POST", "PUT", "DELETE", "PATCH"],
-    allowedHeaders: ["Content-Type", "Authorization"],
+    allowedHeaders: ["Content-Type"],
     credentials: true,
 }));
+
+// ─── Cookie parsing ───────────────────────────────────────────────────────────
+
+app.use(cookieParser());
 
 // ─── Body parsing ─────────────────────────────────────────────────────────────
 

@@ -1,36 +1,36 @@
-const bookModel = require("../models/book.model.js");
+const { getBooks } = require("../db.js");
 
 exports.getDashboardStats = async (req, res) => {
     try {
+        const books = getBooks();
+
         const [totalBooks, byHouse, byGenre, recentBooks] = await Promise.all([
 
             // 1. Total books
-            bookModel.countDocuments(),
+            books.countDocuments(),
 
-            // 2. Books per house — sorted descending by count
-            bookModel.aggregate([
+            // 2. Books per house
+            books.aggregate([
                 { $group: { _id: "$house", count: { $sum: 1 } } },
                 { $sort: { count: -1 } },
                 { $project: { _id: 0, house: "$_id", count: 1 } },
-            ]),
+            ]).toArray(),
 
-            // 3. Books per genre — unwind so each genre tag is counted individually
-            bookModel.aggregate([
+            // 3. Books per genre
+            books.aggregate([
                 { $unwind: "$genre" },
                 { $group: { _id: "$genre", count: { $sum: 1 } } },
                 { $sort: { count: -1 } },
-                { $limit: 50 }, // cap at 50 genres to avoid unbounded payloads
+                { $limit: 50 },
                 { $project: { _id: 0, genre: "$_id", count: 1 } },
-            ]),
+            ]).toArray(),
 
-            // 4. Last 5 recently added — .lean() skips Mongoose document overhead
-            //    since we only read these fields
-            bookModel
-                .find()
+            // 4. Last 5 recently added
+            books
+                .find({}, { projection: { title: 1, author: 1, house: 1, createdAt: 1 } })
                 .sort({ createdAt: -1 })
                 .limit(5)
-                .select("title author house createdAt")
-                .lean()
+                .toArray(),
         ]);
 
         res.json({

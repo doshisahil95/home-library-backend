@@ -1,4 +1,4 @@
-const mongoose = require("mongoose");
+const { ObjectId } = require("mongodb");
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -8,8 +8,12 @@ const fail = (message) => ({ valid: false, message });
 // ─── Shared ───────────────────────────────────────────────────────────────────
 
 exports.validateObjectId = (id) => {
-    if (!mongoose.Types.ObjectId.isValid(id)) return fail("Invalid ID");
-    return ok;
+    try {
+        new ObjectId(id);
+        return ok;
+    } catch {
+        return fail("Invalid ID");
+    }
 };
 
 // ─── Pagination ───────────────────────────────────────────────────────────────
@@ -165,9 +169,7 @@ const VALID_TRANSITIONS = {
 };
 
 exports.validateStatusTransition = (currentStatus, newStatus) => {
-    // Clearing status is always allowed
     if (!newStatus) return ok;
-    // No change is always allowed
     if (currentStatus === newStatus) return ok;
 
     const allowed = VALID_TRANSITIONS[currentStatus ?? null] ?? [];

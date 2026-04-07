@@ -1,11 +1,8 @@
-const bookModel = require("../models/book.model.js");
-const mongoose = require("mongoose");
+const { ObjectId } = require("mongodb");
+const { getBooks } = require("../db.js");
 const validate = require("../utils/validate.js");
 
 // Strip HTML tags from free-text input to neutralise any injected markup.
-// React escapes output by default so XSS via the browser is already blocked,
-// but sanitising at write-time protects any future non-React consumers
-// (exports, emails, server-side rendering) that may render the raw DB value.
 function sanitizeText(str) {
     return str ? str.replace(/<[^>]*>/g, "").trim() : "";
 }
@@ -14,7 +11,6 @@ const ALLOWED_STATUSES = ["read", "reading", "want to read"];
 
 // Extracts the current user's full status entry from a book's statuses array.
 // Returns a flat object with status, dates, locks and rating — or nulls if not set.
-// Single source of truth used by all fetch handlers.
 function extractUserStatus(book, userId) {
     const entry = (book.statuses || []).find(
         (s) => s.userId.toString() === userId.toString()
@@ -48,8 +44,6 @@ exports.fetchAllBooks = async (req, res) => {
 
         if (req.query.filterHouse) filter.house = req.query.filterHouse;
 
-        // filterGenre may be a single string or an array of strings (repeated params).
-        // $all enforces AND semantics — book must have every selected genre.
         const genres = validate.parseGenreFilter(req.query.filterGenre);
         if (genres.length) filter.genre = { $all: genres };
 
@@ -57,23 +51,24 @@ exports.fetchAllBooks = async (req, res) => {
             const v = validate.validateStatusFilter(req.query.filterStatus);
             if (!v.valid) return res.status(400).json({ message: v.message });
             if (req.query.filterStatus === "no-status") {
-                // Books where the current user has no status entry at all
                 filter.statuses = {
-                    $not: { $elemMatch: { userId: new mongoose.Types.ObjectId(req.user.id) } },
+                    $not: { $elemMatch: { userId: new ObjectId(req.user.id) } },
                 };
             } else {
                 filter.statuses = {
                     $elemMatch: {
-                        userId: new mongoose.Types.ObjectId(req.user.id),
+                        userId: new ObjectId(req.user.id),
                         status: req.query.filterStatus,
                     },
                 };
             }
         }
 
+        const books = getBooks();
+
         const [results, total] = await Promise.all([
-            bookModel.find(filter).sort(sortStage).skip(skip).limit(limit).lean(),
-            bookModel.countDocuments(filter),
+            books.find(filter).sort(sortStage).skip(skip).limit(limit).toArray(),
+            books.countDocuments(filter),
         ]);
 
         const totalPages = Math.ceil(total / limit) || 1;
@@ -117,8 +112,6 @@ exports.searchBooks = async (req, res) => {
         const sv = validate.validateStatusFilter(filterStatus);
         if (!sv.valid) return res.status(400).json({ message: sv.message });
 
-        // "no-status" filter uses a $not/$elemMatch query which isn't supported
-        // in Atlas Search — it only works in the Mongoose browse path
         if (filterStatus === "no-status") {
             return res.status(400).json({ message: "The 'No status' filter cannot be combined with a text search" });
         }
@@ -140,11 +133,10 @@ exports.searchBooks = async (req, res) => {
         const filters = [];
         if (filterHouse) filters.push({ equals: { path: "house", value: filterHouse } });
 
-        // Multiple genres use AND semantics — each genre becomes a separate must clause.
-        // Atlas Search $search doesn't support $all, so we push one equals per genre.
         validate.parseGenreFilter(filterGenre).forEach((g) =>
             filters.push({ equals: { path: "genre", value: g } })
         );
+
         if (filterStatus) {
             filters.push({
                 embeddedDocument: {
@@ -152,7 +144,7 @@ exports.searchBooks = async (req, res) => {
                     operator: {
                         compound: {
                             filter: [
-                                { equals: { path: "statuses.userId", value: new mongoose.Types.ObjectId(req.user.id) } },
+                                { equals: { path: "statuses.userId", value: new ObjectId(req.user.id) } },
                                 { equals: { path: "statuses.status", value: filterStatus } },
                             ],
                         },
@@ -175,7 +167,8 @@ exports.searchBooks = async (req, res) => {
             { $limit: limit + 1 },
         ];
 
-        const results = await bookModel.aggregate(pipeline);
+        const books = getBooks();
+        const results = await books.aggregate(pipeline).toArray();
 
         let nextCursor = null;
         if (results.length > limit) {
@@ -213,17 +206,23 @@ exports.addBook = async (req, res) => {
         const av = validate.validateBookBody({ title, author, house, genre, description, userStatus });
         if (!av.valid) return res.status(400).json({ message: av.message });
 
-        const book = await bookModel.create({
+        const books = getBooks();
+        const now = new Date();
+
+        const newBook = {
             title: sanitizeText(title),
             author: sanitizeText(author),
             genre,
             house,
             description: sanitizeText(description),
-        });
+            statuses: [],
+            createdAt: now,
+            updatedAt: now,
+        };
 
         // If a status was provided at add time, build the full status entry
         if (userStatus && ALLOWED_STATUSES.includes(userStatus)) {
-            const userId = new mongoose.Types.ObjectId(req.user.id);
+            const userId = new ObjectId(req.user.id);
             const { startedAt, finishedAt, rating } = req.body;
 
             const dv = validate.validateReadingDates({ startedAt, finishedAt });
@@ -231,7 +230,6 @@ exports.addBook = async (req, res) => {
             const rv = validate.validateRating(rating);
             if (!rv.valid) return res.status(400).json({ message: rv.message });
 
-            const now = new Date();
             const statusEntry = { userId, status: userStatus };
 
             if (userStatus === "reading" || userStatus === "read") {
@@ -242,12 +240,12 @@ exports.addBook = async (req, res) => {
                 if (rating !== undefined && rating !== null) statusEntry.rating = Number(rating);
             }
 
-            await bookModel.findByIdAndUpdate(book._id, {
-                $push: { statuses: statusEntry },
-            });
+            newBook.statuses.push(statusEntry);
         }
 
-        const created = await bookModel.findById(book._id).lean();
+        const result = await books.insertOne(newBook);
+        const created = await books.findOne({ _id: result.insertedId });
+
         res.status(201).json({ data: { ...created, ...extractUserStatus(created, req.user.id) } });
 
     } catch (error) {
@@ -273,8 +271,9 @@ exports.updateBook = async (req, res) => {
         const uv = validate.validateBookBody({ title, author, house, genre, description, userStatus });
         if (!uv.valid) return res.status(400).json({ message: uv.message });
 
-        const userId = new mongoose.Types.ObjectId(req.user.id);
+        const userId = new ObjectId(req.user.id);
         const userIdStr = req.user.id.toString();
+        const bookId = new ObjectId(id);
 
         const { startedAt, finishedAt, rating } = req.body;
 
@@ -283,30 +282,19 @@ exports.updateBook = async (req, res) => {
         const rv = validate.validateRating(rating);
         if (!rv.valid) return res.status(400).json({ message: rv.message });
 
-        const coreUpdate = {
-            title: sanitizeText(title),
-            author: sanitizeText(author),
-            genre,
-            house,
-            description: sanitizeText(description),
-        };
-
-        // Read existing status entry before pulling — needed for lock checks
-        // and to preserve dates/rating not being changed in this request
-        const existing = await bookModel.findById(id).lean();
+        const books = getBooks();
+        const existing = await books.findOne({ _id: bookId });
         if (!existing) return res.status(404).json({ message: "Book not found" });
 
         const existingEntry = (existing.statuses || []).find(
             (s) => s.userId.toString() === userIdStr
         );
 
-        // Enforce one-way status progression
         const currentStatus = existingEntry?.status || null;
         const tv = validate.validateStatusTransition(currentStatus, userStatus);
         if (!tv.valid) return res.status(400).json({ message: tv.message });
 
-        // Build new status entry respecting lock flags, auto-setting dates,
-        // and preserving existing values when no new value is provided
+        // Build new status entry respecting lock flags
         let statusEntry = null;
         if (userStatus) {
             const now = new Date();
@@ -314,19 +302,15 @@ exports.updateBook = async (req, res) => {
 
             if (userStatus === "reading" || userStatus === "read") {
                 if (existingEntry?.startedAtLocked) {
-                    // Already locked — preserve, ignore incoming value
                     statusEntry.startedAt = existingEntry.startedAt;
                     statusEntry.startedAtLocked = true;
                 } else if (startedAt !== undefined && startedAt !== null) {
-                    // One-time manual edit — save and lock permanently
                     statusEntry.startedAt = new Date(startedAt);
                     statusEntry.startedAtLocked = true;
                 } else if (existingEntry?.startedAt) {
-                    // No new value — preserve existing unlocked date
                     statusEntry.startedAt = existingEntry.startedAt;
                     statusEntry.startedAtLocked = false;
                 } else {
-                    // First time reaching this status — auto-set
                     statusEntry.startedAt = now;
                     statusEntry.startedAtLocked = false;
                 }
@@ -347,9 +331,7 @@ exports.updateBook = async (req, res) => {
                     statusEntry.finishedAtLocked = false;
                 }
 
-                // Rating — only on read books, locked once set
                 if (existingEntry?.rating !== undefined && existingEntry?.rating !== null) {
-                    // Already set — preserve, ignore incoming value
                     statusEntry.rating = existingEntry.rating;
                 } else if (rating !== undefined && rating !== null) {
                     statusEntry.rating = Number(rating);
@@ -357,20 +339,31 @@ exports.updateBook = async (req, res) => {
             }
         }
 
-        // Atomic: update core fields and pull old status entry
-        await bookModel.findByIdAndUpdate(id, {
-            $set: coreUpdate,
-            $pull: { statuses: { userId } },
-        });
+        // Pull old status entry and update core fields atomically
+        await books.updateOne(
+            { _id: bookId },
+            {
+                $set: {
+                    title: sanitizeText(title),
+                    author: sanitizeText(author),
+                    genre,
+                    house,
+                    description: sanitizeText(description),
+                    updatedAt: new Date(),
+                },
+                $pull: { statuses: { userId } },
+            }
+        );
 
         // Push new status entry if status is set
         if (statusEntry) {
-            await bookModel.findByIdAndUpdate(id, {
-                $push: { statuses: statusEntry },
-            });
+            await books.updateOne(
+                { _id: bookId },
+                { $push: { statuses: statusEntry } }
+            );
         }
 
-        const updated = await bookModel.findById(id).lean();
+        const updated = await books.findOne({ _id: bookId });
 
         res.json({
             data: {
@@ -397,9 +390,10 @@ exports.deleteBook = async (req, res) => {
         const dv = validate.validateObjectId(id);
         if (!dv.valid) return res.status(400).json({ message: dv.message });
 
-        const deleted = await bookModel.findByIdAndDelete(id);
+        const books = getBooks();
+        const result = await books.deleteOne({ _id: new ObjectId(id) });
 
-        if (!deleted) {
+        if (result.deletedCount === 0) {
             return res.status(404).json({ message: "Book not found" });
         }
 

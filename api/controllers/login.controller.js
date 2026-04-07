@@ -1,29 +1,25 @@
 const jwt = require("jsonwebtoken");
 const crypto = require("crypto");
 const { Resend } = require("resend");
+const { ObjectId } = require("mongodb");
 
-const userModel = require("../models/user.model.js");
+const { getUsers } = require("../db.js");
 const validate = require("../utils/validate.js");
+const { comparePassword, isLocked, hashPassword } = require("../utils/user.utils.js");
 
 // ─── Mail config ──────────────────────────────────────────────────────────────
-// Resend sends over HTTPS (port 443) — not blocked by Railway unlike SMTP (587)
 
 const resend = new Resend(process.env.RESEND_API_KEY);
 
-
 // ─── Constants ────────────────────────────────────────────────────────────────
-// All configurable via environment variables — defaults are sensible for
-// a small home app. Override in Railway variables if needed.
 
 const LOGIN_MAX_ATTEMPTS = parseInt(process.env.LOGIN_MAX_ATTEMPTS) || 5;
-const LOGIN_LOCKOUT_MS = parseInt(process.env.LOGIN_LOCKOUT_MS) || 15 * 60 * 1000; // 15 minutes
+const LOGIN_LOCKOUT_MS = parseInt(process.env.LOGIN_LOCKOUT_MS) || 15 * 60 * 1000;
 const OTP_MAX_ATTEMPTS = parseInt(process.env.OTP_MAX_ATTEMPTS) || 5;
-const OTP_EXPIRY_MS = parseInt(process.env.OTP_EXPIRY_MS) || 10 * 60 * 1000; // 10 minutes
+const OTP_EXPIRY_MS = parseInt(process.env.OTP_EXPIRY_MS) || 10 * 60 * 1000; // 10 min — admin self-reset only
 const JWT_EXPIRY = process.env.JWT_EXPIRY || "4h";
 
 // ─── Cookie helper ────────────────────────────────────────────────────────────
-// SameSite=None + Secure required for cross-origin (Vercel → Railway) in prod.
-// SameSite=Lax in dev since the Vite proxy makes it same-origin.
 
 function cookieOptions() {
     const isProd = process.env.NODE_ENV === "production";
@@ -31,7 +27,7 @@ function cookieOptions() {
         httpOnly: true,
         secure: isProd,
         sameSite: isProd ? "none" : "lax",
-        maxAge: 4 * 60 * 60 * 1000, // 4 hours in ms
+        maxAge: 4 * 60 * 60 * 1000,
         path: "/",
     };
 }
@@ -46,45 +42,47 @@ exports.login = async (req, res) => {
         const lv = validate.validateLoginBody({ email, password });
         if (!lv.valid) return res.status(400).json({ message: lv.message });
 
-        const user = await userModel.findOne({ email });
+        const users = getUsers();
+        const user = await users.findOne({ email });
 
-        // Use a consistent error message whether the user exists or not —
-        // prevents email enumeration by timing or message differences
         if (!user) {
             return res.status(400).json({ message: "Invalid email or password" });
         }
 
-        // Check lockout before comparing passwords — fail fast, no bcrypt cost
-        if (user.isLocked()) {
-            const remaining = Math.ceil((user.lockUntil - Date.now()) / 60000);
+        if (isLocked(user)) {
+            const remaining = Math.ceil((new Date(user.lockUntil) - Date.now()) / 60000);
             return res.status(429).json({
                 message: `Account temporarily locked. Try again in ${remaining} minute${remaining === 1 ? "" : "s"}.`
             });
         }
 
-        const passwordValid = await user.comparePassword(password);
+        const passwordValid = await comparePassword(password, user.password);
 
         if (!passwordValid) {
-            // Increment attempt counter; lock if threshold reached
-            user.loginAttempts = (user.loginAttempts || 0) + 1;
+            const attempts = (user.loginAttempts || 0) + 1;
 
-            if (user.loginAttempts >= LOGIN_MAX_ATTEMPTS) {
-                user.lockUntil = new Date(Date.now() + LOGIN_LOCKOUT_MS);
-                user.loginAttempts = 0; // reset counter — lockUntil carries the state
-                await user.save();
+            if (attempts >= LOGIN_MAX_ATTEMPTS) {
+                await users.updateOne(
+                    { _id: user._id },
+                    { $set: { loginAttempts: 0, lockUntil: new Date(Date.now() + LOGIN_LOCKOUT_MS) } }
+                );
                 return res.status(429).json({
                     message: "Too many failed attempts. Account locked for 15 minutes."
                 });
             }
 
-            await user.save();
+            await users.updateOne(
+                { _id: user._id },
+                { $set: { loginAttempts: attempts } }
+            );
             return res.status(400).json({ message: "Invalid email or password" });
         }
 
-        // Successful login — clear any lockout state
-        user.loginAttempts = 0;
-        user.lockUntil = undefined;
-        await user.save();
+        // Successful login — clear lockout state
+        await users.updateOne(
+            { _id: user._id },
+            { $set: { loginAttempts: 0 }, $unset: { lockUntil: "" } }
+        );
 
         const token = jwt.sign(
             { id: user._id, role: user.role },
@@ -92,7 +90,6 @@ exports.login = async (req, res) => {
             { expiresIn: JWT_EXPIRY }
         );
 
-        // Set token in HttpOnly cookie — not accessible to JS, safe from XSS
         res.cookie("token", token, cookieOptions());
 
         return res.status(200).json({
@@ -121,11 +118,11 @@ exports.sendResetOTP = async (req, res) => {
     try {
         const { email } = req.body;
 
-        // Always return 200 — prevents email enumeration
         const ev = validate.validateEmail({ email });
         if (!ev.valid) return res.status(200).json({ message: "OTP sent successfully" });
 
-        const user = await userModel.findOne({ email });
+        const users = getUsers();
+        const user = await users.findOne({ email });
 
         if (!user) {
             return res.status(200).json({ message: "OTP sent successfully" });
@@ -133,11 +130,16 @@ exports.sendResetOTP = async (req, res) => {
 
         const otp = Math.floor(100000 + Math.random() * 900000).toString();
 
-        user.resetOTP = crypto.createHash("sha256").update(otp).digest("hex");
-        user.otpExpiry = new Date(Date.now() + OTP_EXPIRY_MS);
-        user.otpAttempts = 0;
-
-        await user.save();
+        await users.updateOne(
+            { _id: user._id },
+            {
+                $set: {
+                    resetOTP: crypto.createHash("sha256").update(otp).digest("hex"),
+                    otpExpiry: new Date(Date.now() + OTP_EXPIRY_MS),
+                    otpAttempts: 0,
+                },
+            }
+        );
 
         await resend.emails.send({
             from: "Home Library <onboarding@resend.dev>",
@@ -166,13 +168,14 @@ exports.resetPassword = async (req, res) => {
         const rv = validate.validateOTPBody({ email, otp, newPassword });
         if (!rv.valid) return res.status(400).json({ message: "Invalid or expired OTP" });
 
-        const user = await userModel.findOne({ email });
+        const users = getUsers();
+        const user = await users.findOne({ email });
 
         if (!user) {
             return res.status(400).json({ message: "Invalid or expired OTP" });
         }
 
-        if (user.otpAttempts >= OTP_MAX_ATTEMPTS) {
+        if ((user.otpAttempts || 0) >= OTP_MAX_ATTEMPTS) {
             return res.status(400).json({
                 message: "Too many failed attempts. Please request a new OTP."
             });
@@ -183,23 +186,24 @@ exports.resetPassword = async (req, res) => {
         if (
             user.resetOTP !== hashedOTP ||
             !user.otpExpiry ||
-            user.otpExpiry < Date.now()
+            new Date(user.otpExpiry) < new Date()
         ) {
-            user.otpAttempts = (user.otpAttempts || 0) + 1;
-            await user.save();
+            await users.updateOne(
+                { _id: user._id },
+                { $inc: { otpAttempts: 1 } }
+            );
             return res.status(400).json({ message: "Invalid or expired OTP" });
         }
 
-        // Valid OTP — hash the new password manually so we can do a single
-        // atomic update clearing the OTP fields at the same time.
-        // This avoids the two-step save pattern and any pre-save hook conflicts.
-        const bcrypt = require("bcrypt");
-        const hashedPassword = await bcrypt.hash(newPassword, 10);
+        const hashedPassword = await hashPassword(newPassword);
 
-        await userModel.updateOne({ email }, {
-            $set: { password: hashedPassword, loginAttempts: 0 },
-            $unset: { resetOTP: 1, otpExpiry: 1, otpAttempts: 1, lockUntil: 1 },
-        });
+        await users.updateOne(
+            { _id: user._id },
+            {
+                $set: { password: hashedPassword, loginAttempts: 0 },
+                $unset: { resetOTP: "", otpExpiry: "", otpAttempts: "", lockUntil: "" },
+            }
+        );
 
         return res.status(200).json({ message: "Password reset successful" });
 
@@ -213,14 +217,9 @@ exports.resetPassword = async (req, res) => {
 
 
 /* ═══════════════════════ GET ME ════════════════════════════════════════════ */
-// Called by ProtectedRoute on mount and every 5 minutes.
-// Returns session validity and ms remaining so the frontend can show a warning.
 
 exports.getMe = (req, res) => {
-    // Token already verified by auth middleware — req.user is populated
-    // Re-read the cookie to get the raw exp value for time-remaining calc
     try {
-        const jwt = require("jsonwebtoken");
         const decoded = jwt.verify(req.cookies.token, process.env.JWT_SECRET);
         const msRemaining = decoded.exp * 1000 - Date.now();
         return res.json({ valid: true, msRemaining });
@@ -231,8 +230,6 @@ exports.getMe = (req, res) => {
 
 
 /* ═══════════════════════ REFRESH TOKEN ════════════════════════════════════ */
-// Issues a fresh 4-hour token when the user clicks "Stay logged in".
-// Only callable while the current token is still valid (auth middleware gates it).
 
 exports.refreshToken = (req, res) => {
     try {

@@ -1,7 +1,9 @@
-const userModel = require("../models/user.model.js");
+const { ObjectId } = require("mongodb");
+const { getUsers, getBooks } = require("../db.js");
 const validate = require("../utils/validate.js");
 
-// FIX 20: Renamed from updateSettings to updateTheme to be accurate about what it does
+// ─── Update theme ─────────────────────────────────────────────────────────────
+
 exports.updateTheme = async (req, res) => {
     try {
         const { theme } = req.body;
@@ -9,33 +11,34 @@ exports.updateTheme = async (req, res) => {
         const tv = validate.validateTheme({ theme });
         if (!tv.valid) return res.status(400).json({ message: tv.message });
 
-        // FIX 21: Check that user still exists before accessing result
-        const user = await userModel.findByIdAndUpdate(
-            req.user.id,
-            { theme },
-            { new: true }
+        const users = getUsers();
+        const result = await users.findOneAndUpdate(
+            { _id: new ObjectId(req.user.id) },
+            { $set: { theme, updatedAt: new Date() } },
+            { returnDocument: "after" }
         );
 
-        if (!user) {
+        if (!result) {
             return res.status(404).json({ message: "User not found" });
         }
 
-        res.json({ message: "Theme updated", theme: user.theme });
+        res.json({ message: "Theme updated", theme: result.theme });
 
     } catch (err) {
         res.status(500).json({ message: "Failed to update theme" });
     }
 };
 
-const bookModel = require("../models/book.model.js");
-const mongoose = require("mongoose");
+
+// ─── Get discover data ────────────────────────────────────────────────────────
 
 exports.getDiscoverData = async (req, res) => {
     try {
         const idv = validate.validateObjectId(req.user.id);
         if (!idv.valid) return res.status(400).json({ message: idv.message });
 
-        const userId = new mongoose.Types.ObjectId(req.user.id);
+        const userId = new ObjectId(req.user.id);
+        const books = getBooks();
 
         const [
             myStatus,
@@ -46,24 +49,24 @@ exports.getDiscoverData = async (req, res) => {
         ] = await Promise.all([
 
             // 1. My reading status counts
-            bookModel.aggregate([
+            books.aggregate([
                 { $unwind: "$statuses" },
                 { $match: { "statuses.userId": userId } },
                 { $group: { _id: "$statuses.status", count: { $sum: 1 } } },
                 { $project: { _id: 0, status: "$_id", count: 1 } },
-            ]),
+            ]).toArray(),
 
-            // 2. My genre breakdown — genres of books I've read or am reading
-            bookModel.aggregate([
+            // 2. My genre breakdown
+            books.aggregate([
                 { $match: { statuses: { $elemMatch: { userId, status: { $in: ["read", "reading"] } } } } },
                 { $unwind: "$genre" },
                 { $group: { _id: "$genre", count: { $sum: 1 } } },
                 { $sort: { count: -1 } },
                 { $project: { _id: 0, genre: "$_id", count: 1 } },
-            ]),
+            ]).toArray(),
 
-            // 3. Recently finished by others — last 10 "read" entries by other users
-            bookModel.aggregate([
+            // 3. Recently finished by others
+            books.aggregate([
                 { $unwind: "$statuses" },
                 { $match: { "statuses.status": "read", "statuses.userId": { $ne: userId } } },
                 { $sort: { "statuses.finishedAt": -1 } },
@@ -86,10 +89,10 @@ exports.getDiscoverData = async (req, res) => {
                         readerName: { $arrayElemAt: ["$readerInfo.name", 0] },
                     }
                 },
-            ]),
+            ]).toArray(),
 
-            // 4. Recommendations — books not yet touched by current user, ranked by genre overlap
-            bookModel.aggregate([
+            // 4. Recommendations
+            books.aggregate([
                 { $match: { "statuses.userId": { $ne: userId } } },
                 { $unwind: "$genre" },
                 {
@@ -119,11 +122,10 @@ exports.getDiscoverData = async (req, res) => {
                 { $sort: { matchScore: -1 } },
                 { $limit: 5 },
                 { $project: { title: 1, author: 1, house: 1, genre: 1, matchScore: 1 } },
-            ]),
+            ]).toArray(),
 
-            // 5. Reading timeline — individual books I finished, grouped by month
-            //    Returns books sorted newest first so the timeline shows recent activity at top
-            bookModel.aggregate([
+            // 5. Reading timeline
+            books.aggregate([
                 { $unwind: "$statuses" },
                 {
                     $match: {
@@ -144,7 +146,7 @@ exports.getDiscoverData = async (req, res) => {
                         month: { $month: "$statuses.finishedAt" },
                     }
                 },
-            ]),
+            ]).toArray(),
         ]);
 
         res.json({

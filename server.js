@@ -1,11 +1,12 @@
 require("dotenv").config();
 const express = require("express");
-const mongoose = require("mongoose");
 const helmet = require("helmet");
 const cors = require("cors");
 const rateLimit = require("express-rate-limit");
 const morgan = require("morgan");
 const cookieParser = require("cookie-parser");
+
+const { connectDB, disconnectDB } = require("./api/db.js");
 
 const app = express();
 
@@ -31,21 +32,14 @@ if (missing.length > 0) {
 
 // ─── MongoDB ──────────────────────────────────────────────────────────────────
 
-mongoose.connect(process.env.MONGODB_URI, {
-    dbName: process.env.DATABASE_NAME,
-    appName: process.env.APP_NAME,
-    compressors: "zstd",
-}).then(() => {
-    console.log("Connected to MongoDB");
-}).catch((err) => {
+connectDB().catch((err) => {
     console.error("Error connecting to MongoDB:", err);
     process.exit(1);
 });
 
 const gracefulShutdown = async (signal) => {
     console.log(`${signal} received. Shutting down.`);
-    await mongoose.disconnect();
-    console.log("MongoDB disconnected.");
+    await disconnectDB();
     process.exit(0);
 };
 
@@ -56,7 +50,7 @@ process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
 // Railway terminates TLS at the edge and forwards via x-forwarded-proto.
 // Redirect any plain HTTP request to HTTPS in production.
 
-app.set("trust proxy", 1); // trust Railway's reverse proxy
+app.set("trust proxy", 1);
 
 app.use((req, res, next) => {
     if (
@@ -69,21 +63,16 @@ app.use((req, res, next) => {
 });
 
 // ─── Request logging (Morgan) ─────────────────────────────────────────────────
-// Logs every request to stdout — Railway captures this automatically.
-// Format: METHOD /path STATUS bytes - Xms  e.g. GET /fetchAllBooks 200 142 - 23.4 ms
-// Using 'combined' in production gives IP + user-agent; 'dev' is cleaner locally.
 
 app.use(morgan(process.env.NODE_ENV === "production" ? "combined" : "dev"));
 
-// ─── Helmet (security headers + HSTS) ────────────────────────────────────────
+// ─── Helmet ───────────────────────────────────────────────────────────────────
 
 app.use(helmet({
     hsts: {
-        maxAge: 31536000, // 1 year in seconds
+        maxAge: 31536000,
         includeSubDomains: true,
     },
-    // contentSecurityPolicy left at Helmet's secure defaults —
-    // tighten per-environment via vercel.json on the frontend
 }));
 
 // ─── CORS ─────────────────────────────────────────────────────────────────────
@@ -94,9 +83,9 @@ const allowedOrigins = (process.env.CORS_ORIGIN || "http://localhost:5173")
 
 app.use(cors({
     origin: (origin, callback) => {
-        if (!origin) return callback(null, true); // curl, Postman, server-to-server
+        if (!origin) return callback(null, true);
         if (allowedOrigins.includes(origin)) return callback(null, true);
-        callback(null, false); // reject — browser receives a proper CORS block
+        callback(null, false);
     },
     methods: ["GET", "POST", "PUT", "DELETE", "PATCH"],
     allowedHeaders: ["Content-Type"],
@@ -113,13 +102,10 @@ app.use(express.json({ limit: "50kb" }));
 app.use(express.urlencoded({ limit: "50kb", extended: true }));
 
 // ─── Rate limiting ────────────────────────────────────────────────────────────
-// Two tiers:
-//   authLimiter  — tight limit on unauthenticated endpoints (login, OTP, reset)
-//   globalLimiter — broader limit on all other traffic
 
 const authLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 10,              // 10 attempts per IP per window
+    windowMs: 15 * 60 * 1000,
+    max: 10,
     message: "Too many attempts. Please try again later.",
     standardHeaders: true,
     legacyHeaders: false,
@@ -134,8 +120,6 @@ const globalLimiter = rateLimit({
 });
 
 app.use(globalLimiter);
-
-// Auth-specific limiter applied in routes — exported so app.routes.js can use it
 app.locals.authLimiter = authLimiter;
 
 // ─── Cache control ────────────────────────────────────────────────────────────

@@ -4,6 +4,7 @@ const userController = require("../controllers/user.controller.js");
 const dashboardController = require("../controllers/dashboard.controller.js");
 const systemController = require("../controllers/system.controller.js");
 const adminController = require("../controllers/admin.controller.js");
+const publicController = require("../controllers/public.controller.js");
 const auth = require("../middleware/auth.middleware.js");
 const requireAdmin = require("../middleware/requireAdmin.middleware.js");
 
@@ -47,5 +48,8 @@ module.exports = function (app) {
     app.post("/admin/users", auth, requireAdmin, adminController.addUser);
     app.patch("/admin/users/:id/role", auth, requireAdmin, adminController.changeRole);
     app.post("/admin/users/:id/reset-otp", auth, requireAdmin, adminController.sendUserResetOTP);
+
+    // ─── Public (no auth) ─────────────────────────────────────────────────
+    app.get("/public/:userId", publicController.getPublicBooks);
 
 };

@@ -26,6 +26,7 @@ function extractUserStatus(book, userId) {
         finishedAt: entry.finishedAt || null,
         finishedAtLocked: entry.finishedAtLocked || false,
         rating: entry.rating ?? null,
+        isPublic: entry.isPublic || false,
     };
 }
 
@@ -207,7 +208,7 @@ exports.searchBooks = async (req, res) => {
 
 exports.addBook = async (req, res) => {
     try {
-        const { title, author, genre, house, language, locationInHouse, description, userStatus } = req.body;
+        const { title, author, genre, house, language, locationInHouse, description, userStatus, isPublic } = req.body;
 
         const av = validate.validateBookBody({ title, author, house, genre, description, language, locationInHouse, userStatus });
         if (!av.valid) return res.status(400).json({ message: av.message });
@@ -238,7 +239,7 @@ exports.addBook = async (req, res) => {
             const rv = validate.validateRating(rating);
             if (!rv.valid) return res.status(400).json({ message: rv.message });
 
-            const statusEntry = { userId, status: userStatus };
+            const statusEntry = { userId, status: userStatus, isPublic: isPublic === true };
 
             if (userStatus === "reading" || userStatus === "read") {
                 statusEntry.startedAt = startedAt ? new Date(startedAt) : now;
@@ -274,7 +275,7 @@ exports.updateBook = async (req, res) => {
         const idv = validate.validateObjectId(id);
         if (!idv.valid) return res.status(400).json({ message: idv.message });
 
-        const { title, author, genre, house, language, locationInHouse, description, userStatus } = req.body;
+        const { title, author, genre, house, language, locationInHouse, description, userStatus, isPublic } = req.body;
 
         const uv = validate.validateBookBody({ title, author, house, genre, description, userStatus });
         if (!uv.valid) return res.status(400).json({ message: uv.message });
@@ -306,7 +307,7 @@ exports.updateBook = async (req, res) => {
         let statusEntry = null;
         if (userStatus) {
             const now = new Date();
-            statusEntry = { userId, status: userStatus };
+            statusEntry = { userId, status: userStatus, isPublic: isPublic === true };
 
             if (userStatus === "reading" || userStatus === "read") {
                 if (existingEntry?.startedAtLocked) {

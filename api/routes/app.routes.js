@@ -3,6 +3,7 @@ const bookController = require("../controllers/book.controller.js");
 const userController = require("../controllers/user.controller.js");
 const dashboardController = require("../controllers/dashboard.controller.js");
 const systemController = require("../controllers/system.controller.js");
+const adminController = require("../controllers/admin.controller.js");
 const auth = require("../middleware/auth.middleware.js");
 const requireAdmin = require("../middleware/requireAdmin.middleware.js");
 
@@ -40,4 +41,11 @@ module.exports = function (app) {
     app.post("/reference-data/:type", auth, requireAdmin, systemController.create);
     app.put("/reference-data/:type/:id", auth, requireAdmin, systemController.update);
     app.delete("/reference-data/:type/:id", auth, requireAdmin, systemController.remove);
+
+    // ─── Admin (protected, admin only) ────────────────────────────────────
+    app.get("/admin/users", auth, requireAdmin, adminController.listUsers);
+    app.post("/admin/users", auth, requireAdmin, adminController.addUser);
+    app.patch("/admin/users/:id/role", auth, requireAdmin, adminController.changeRole);
+    app.post("/admin/users/:id/reset-otp", auth, requireAdmin, adminController.sendUserResetOTP);
+
 };

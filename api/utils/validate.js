@@ -76,7 +76,6 @@ exports.validateStatusFilter = (status) => {
         return fail("Invalid status filter");
     return ok;
 };
-
 exports.validateLanguageFilter = (language) => {
     if (language && typeof language !== "string") return fail("Invalid language filter");
     return ok;
@@ -195,6 +194,34 @@ exports.validateStatusTransition = (currentStatus, newStatus) => {
     if (!allowed.includes(newStatus)) {
         return fail(`Cannot change status from "${currentStatus || "none"}" to "${newStatus}"`);
     }
+    return ok;
+};
+
+
+// ─── Admin / User management ──────────────────────────────────────────────────
+
+const ALLOWED_ROLES = ["user", "admin"];
+const MAX_NAME_LEN = 100;
+
+exports.validateName = ({ name }) => {
+    if (!name || !name.trim()) return fail("Name is required");
+    if (name.trim().length > MAX_NAME_LEN) return fail(`Name must be ${MAX_NAME_LEN} characters or fewer`);
+    return ok;
+};
+
+// Full password strength check — used when creating a new user or resetting via OTP.
+// Same rules as validateOTPBody but accepts just the password field.
+exports.validateNewPassword = ({ password }) => {
+    if (!password) return fail("Password is required");
+    if (password.length < MIN_PASSWORD_LEN) return fail(`Password must be at least ${MIN_PASSWORD_LEN} characters`);
+    if (!PASSWORD_UPPER.test(password)) return fail("Password must contain at least one uppercase letter");
+    if (!PASSWORD_NUMBER.test(password)) return fail("Password must contain at least one number");
+    if (!PASSWORD_SPECIAL.test(password)) return fail("Password must contain at least one special character");
+    return ok;
+};
+
+exports.validateRole = ({ role }) => {
+    if (!ALLOWED_ROLES.includes(role)) return fail("Invalid role value");
     return ok;
 };
 

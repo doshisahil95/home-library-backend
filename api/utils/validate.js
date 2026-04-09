@@ -38,7 +38,7 @@ const MAX_DESCRIPTION_LEN = 1000;
 const MAX_TITLE_LEN = 200;
 const MAX_AUTHOR_LEN = 200;
 
-exports.validateBookBody = ({ title, author, house, genre, description, userStatus }) => {
+exports.validateBookBody = ({ title, author, house, genre, description, language, locationInHouse, userStatus }) => {
     if (!title?.trim()) return fail("Title is required");
     if (!author?.trim()) return fail("Author is required");
     if (!house) return fail("House is required");
@@ -51,6 +51,20 @@ exports.validateBookBody = ({ title, author, house, genre, description, userStat
     if (description && description.length > MAX_DESCRIPTION_LEN)
         return fail(`Description must be ${MAX_DESCRIPTION_LEN} characters or fewer`);
 
+    // Language is optional — validate only if provided
+    if (language !== undefined && language !== null && language !== "") {
+        if (typeof language !== "string")
+            return fail("Invalid language value");
+    }
+
+    // locationInHouse is optional — validate only if provided
+    if (locationInHouse !== undefined && locationInHouse !== null && locationInHouse !== "") {
+        if (typeof locationInHouse !== "string")
+            return fail("Invalid locationInHouse value");
+        if (locationInHouse.length > 200)
+            return fail("Location must be 200 characters or fewer");
+    }
+
     if (userStatus !== undefined && userStatus !== null && !ALLOWED_STATUSES.includes(userStatus))
         return fail("Invalid status value");
 
@@ -60,6 +74,11 @@ exports.validateBookBody = ({ title, author, house, genre, description, userStat
 exports.validateStatusFilter = (status) => {
     if (status && status !== "no-status" && !ALLOWED_STATUSES.includes(status))
         return fail("Invalid status filter");
+    return ok;
+};
+
+exports.validateLanguageFilter = (language) => {
+    if (language && typeof language !== "string") return fail("Invalid language filter");
     return ok;
 };
 

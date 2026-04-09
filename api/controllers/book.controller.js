@@ -43,6 +43,11 @@ exports.fetchAllBooks = async (req, res) => {
         const filter = {};
 
         if (req.query.filterHouse) filter.house = req.query.filterHouse;
+        if (req.query.filterLanguage) {
+            const lv = validate.validateLanguageFilter(req.query.filterLanguage);
+            if (!lv.valid) return res.status(400).json({ message: lv.message });
+            filter.language = req.query.filterLanguage;
+        }
 
         const genres = validate.parseGenreFilter(req.query.filterGenre);
         if (genres.length) filter.genre = { $all: genres };
@@ -102,10 +107,10 @@ exports.fetchAllBooks = async (req, res) => {
 
 exports.searchBooks = async (req, res) => {
     try {
-        const { q, filterHouse, filterGenre, filterStatus } = req.query;
+        const { q, filterHouse, filterGenre, filterStatus, filterLanguage } = req.query;
         const { limit } = validate.parsePaginationParams(req.query);
 
-        if (!q && !filterHouse && !filterGenre && !filterStatus) {
+        if (!q && !filterHouse && !filterGenre && !filterStatus && !filterLanguage) {
             return res.status(400).json({ message: "Provide a search query or at least one filter" });
         }
 
@@ -132,6 +137,7 @@ exports.searchBooks = async (req, res) => {
 
         const filters = [];
         if (filterHouse) filters.push({ equals: { path: "house", value: filterHouse } });
+        if (filterLanguage) filters.push({ equals: { path: "language", value: filterLanguage } });
 
         validate.parseGenreFilter(filterGenre).forEach((g) =>
             filters.push({ equals: { path: "genre", value: g } })
@@ -201,9 +207,9 @@ exports.searchBooks = async (req, res) => {
 
 exports.addBook = async (req, res) => {
     try {
-        const { title, author, genre, house, description, userStatus } = req.body;
+        const { title, author, genre, house, language, locationInHouse, description, userStatus } = req.body;
 
-        const av = validate.validateBookBody({ title, author, house, genre, description, userStatus });
+        const av = validate.validateBookBody({ title, author, house, genre, description, language, locationInHouse, userStatus });
         if (!av.valid) return res.status(400).json({ message: av.message });
 
         const books = getBooks();
@@ -214,6 +220,8 @@ exports.addBook = async (req, res) => {
             author: sanitizeText(author),
             genre,
             house,
+            language: language || "",
+            locationInHouse: sanitizeText(locationInHouse),
             description: sanitizeText(description),
             statuses: [],
             createdAt: now,
@@ -266,7 +274,7 @@ exports.updateBook = async (req, res) => {
         const idv = validate.validateObjectId(id);
         if (!idv.valid) return res.status(400).json({ message: idv.message });
 
-        const { title, author, genre, house, description, userStatus } = req.body;
+        const { title, author, genre, house, language, locationInHouse, description, userStatus } = req.body;
 
         const uv = validate.validateBookBody({ title, author, house, genre, description, userStatus });
         if (!uv.valid) return res.status(400).json({ message: uv.message });
@@ -348,6 +356,8 @@ exports.updateBook = async (req, res) => {
                     author: sanitizeText(author),
                     genre,
                     house,
+                    language: language || "",
+                    locationInHouse: sanitizeText(locationInHouse),
                     description: sanitizeText(description),
                     updatedAt: new Date(),
                 },

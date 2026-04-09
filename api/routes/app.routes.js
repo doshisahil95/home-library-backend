@@ -2,11 +2,11 @@ const loginController = require("../controllers/login.controller.js");
 const bookController = require("../controllers/book.controller.js");
 const userController = require("../controllers/user.controller.js");
 const dashboardController = require("../controllers/dashboard.controller.js");
+const systemController = require("../controllers/system.controller.js");
 const auth = require("../middleware/auth.middleware.js");
+const requireAdmin = require("../middleware/requireAdmin.middleware.js");
 
 module.exports = function (app) {
-    // Auth-specific rate limiter — set in server.js, applied here only to
-    // public endpoints that are the primary targets for credential attacks
     const authLimiter = app.locals.authLimiter;
 
     // ─── Auth (public, rate-limited tightly) ───────────────────────────────
@@ -32,4 +32,12 @@ module.exports = function (app) {
     // ─── User (protected) ──────────────────────────────────────────────────
     app.patch("/users/theme", auth, userController.updateTheme);
     app.get("/discover", auth, userController.getDiscoverData);
+
+    // ─── Reference data ────────────────────────────────────────────────────
+    // GET — all authenticated users (needed for modal + filter panel)
+    // POST / PUT / DELETE — admin only
+    app.get("/reference-data/:type", auth, systemController.getAll);
+    app.post("/reference-data/:type", auth, requireAdmin, systemController.create);
+    app.put("/reference-data/:type/:id", auth, requireAdmin, systemController.update);
+    app.delete("/reference-data/:type/:id", auth, requireAdmin, systemController.remove);
 };

@@ -12,17 +12,17 @@ exports.updateTheme = async (req, res) => {
         if (!tv.valid) return res.status(400).json({ message: tv.message });
 
         const users = getUsers();
-        const result = await users.findOneAndUpdate(
+        const { value } = await users.findOneAndUpdate(
             { _id: new ObjectId(req.user.id) },
             { $set: { theme, updatedAt: new Date() } },
             { returnDocument: "after" }
         );
 
-        if (!result) {
+        if (!value) {
             return res.status(404).json({ message: "User not found" });
         }
 
-        res.json({ message: "Theme updated", theme: result.theme });
+        res.json({ message: "Theme updated", theme: value.theme });
 
     } catch (err) {
         res.status(500).json({ message: "Failed to update theme" });

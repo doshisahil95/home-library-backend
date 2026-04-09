@@ -178,3 +178,21 @@ exports.validateStatusTransition = (currentStatus, newStatus) => {
     }
     return ok;
 };
+
+// ─── Reference data ───────────────────────────────────────────────────────────
+
+const MAX_REFERENCE_NAME_LEN = 100;
+
+// Converts a string to title case — "fiction" → "Fiction", "sci-fi" → "Sci-Fi"
+exports.toTitleCase = (str) =>
+    str
+        .trim()
+        .toLowerCase()
+        .replace(/(?:^|-|\s)\S/g, (ch) => ch.toUpperCase());
+
+exports.validateReferenceName = (name) => {
+    if (!name || !name.trim()) return fail("Name is required");
+    if (name.trim().length > MAX_REFERENCE_NAME_LEN)
+        return fail(`Name must be ${MAX_REFERENCE_NAME_LEN} characters or fewer`);
+    return ok;
+};

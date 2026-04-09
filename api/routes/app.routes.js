@@ -48,6 +48,8 @@ module.exports = function (app) {
     app.post("/admin/users", auth, requireAdmin, adminController.addUser);
     app.patch("/admin/users/:id/role", auth, requireAdmin, adminController.changeRole);
     app.post("/admin/users/:id/reset-otp", auth, requireAdmin, adminController.sendUserResetOTP);
+    app.post("/admin/csv/validate", auth, requireAdmin, adminController.validateCSV);
+    app.post("/admin/csv/import", auth, requireAdmin, adminController.importCSV);
 
     // ─── Public (no auth) ─────────────────────────────────────────────────
     app.get("/public/:userId", publicController.getPublicBooks);

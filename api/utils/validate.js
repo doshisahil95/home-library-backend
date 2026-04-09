@@ -242,3 +242,30 @@ exports.validateReferenceName = (name) => {
         return fail(`Name must be ${MAX_REFERENCE_NAME_LEN} characters or fewer`);
     return ok;
 };
+
+// ─── CSV bulk upload ──────────────────────────────────────────────────────────
+// Validates a single parsed CSV row against field rules only.
+// Reference data checks (house/genre/language existence) and DB duplicate
+// checks are done separately in the controller — keeps this pure and fast.
+
+const MAX_GENRES_PER_BOOK = 10;
+
+exports.validateCSVRow = ({ title, author, house, genres, language, locationInHouse, description }) => {
+    if (!title || !title.trim()) return fail("Title is required");
+    if (!author || !author.trim()) return fail("Author is required");
+    if (!house || !house.trim()) return fail("House is required");
+    if (!genres || genres.length === 0) return fail("At least one genre is required");
+
+    if (title.trim().length > MAX_TITLE_LEN)
+        return fail(`Title must be ${MAX_TITLE_LEN} characters or fewer`);
+    if (author.trim().length > MAX_AUTHOR_LEN)
+        return fail(`Author must be ${MAX_AUTHOR_LEN} characters or fewer`);
+    if (description && description.length > MAX_DESCRIPTION_LEN)
+        return fail(`Description must be ${MAX_DESCRIPTION_LEN} characters or fewer`);
+    if (locationInHouse && locationInHouse.length > 200)
+        return fail("Location must be 200 characters or fewer");
+    if (genres.length > MAX_GENRES_PER_BOOK)
+        return fail(`A book can have at most ${MAX_GENRES_PER_BOOK} genres`);
+
+    return ok;
+};

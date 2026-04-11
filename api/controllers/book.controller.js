@@ -10,14 +10,20 @@ function sanitizeText(str) {
 const ALLOWED_STATUSES = ["read", "reading", "want to read"];
 
 // Extracts the current user's full status entry from a book's statuses array.
-// Returns a flat object with status, dates, locks and rating — or nulls if not set.
+// Returns a flat object with status, dates, locks, rating and isPublic.
+// isPublic is derived from the top-level publicByUsers array — independent of reading status.
 function extractUserStatus(book, userId) {
+    const userIdStr = userId.toString();
     const entry = (book.statuses || []).find(
-        (s) => s.userId.toString() === userId.toString()
+        (s) => s.userId.toString() === userIdStr
+    );
+    // isPublic lives on the book's publicByUsers array, not inside the status entry
+    const isPublic = (book.publicByUsers || []).some(
+        (id) => id.toString() === userIdStr
     );
     if (!entry) return {
         userStatus: null, startedAt: null, startedAtLocked: false,
-        finishedAt: null, finishedAtLocked: false, rating: null,
+        finishedAt: null, finishedAtLocked: false, rating: null, isPublic,
     };
     return {
         userStatus: entry.status,
@@ -26,7 +32,7 @@ function extractUserStatus(book, userId) {
         finishedAt: entry.finishedAt || null,
         finishedAtLocked: entry.finishedAtLocked || false,
         rating: entry.rating ?? null,
-        isPublic: entry.isPublic || false,
+        isPublic,
     };
 }
 
@@ -122,9 +128,9 @@ exports.searchBooks = async (req, res) => {
             return res.status(400).json({ message: "The 'No status' filter cannot be combined with a text search" });
         }
 
-        const sa = validate.parseSearchAfter(req.query.searchAfter);
-        if (!sa.valid) return res.status(400).json({ message: sa.message });
-        const searchAfter = sa.value;
+        // searchAfter is the opaque base64 token from $meta: "searchSequenceToken" on the previous page.
+        // Pass it directly as a string — never parse or transform it.
+        const searchAfter = req.query.searchAfter || null;
 
         const compound = {};
 
@@ -160,6 +166,8 @@ exports.searchBooks = async (req, res) => {
             });
         }
 
+
+
         if (filters.length > 0) compound.filter = filters;
 
         const pipeline = [
@@ -171,6 +179,25 @@ exports.searchBooks = async (req, res) => {
                     ...(searchAfter && { searchAfter }),
                 },
             },
+            // $project must come before $limit so $meta: "searchSequenceToken" is still in scope.
+            // The token is an opaque base64 string issued by Atlas Search for cursor pagination.
+            {
+                $project: {
+                    _id: 1,
+                    title: 1,
+                    author: 1,
+                    genre: 1,
+                    house: 1,
+                    language: 1,
+                    locationInHouse: 1,
+                    description: 1,
+                    statuses: 1,
+                    publicByUsers: 1,
+                    createdAt: 1,
+                    updatedAt: 1,
+                    paginationToken: { $meta: "searchSequenceToken" },
+                },
+            },
             { $limit: limit + 1 },
         ];
 
@@ -179,12 +206,13 @@ exports.searchBooks = async (req, res) => {
 
         let nextCursor = null;
         if (results.length > limit) {
-            const last = results[limit - 1];
-            nextCursor = [last.createdAt, last._id];
+            // paginationToken is the opaque base64 string from $meta: "searchSequenceToken"
+            nextCursor = results[limit - 1].paginationToken;
             results.pop();
         }
 
-        const data = results.map((book) => ({
+        // Strip paginationToken from the response — it's internal pagination state only
+        const data = results.map(({ paginationToken, ...book }) => ({
             ...book,
             ...extractUserStatus(book, req.user.id),
         }));
@@ -216,6 +244,9 @@ exports.addBook = async (req, res) => {
         const books = getBooks();
         const now = new Date();
 
+        const userId = new ObjectId(req.user.id);
+        const isPublicBool = isPublic === true || isPublic === "true";
+
         const newBook = {
             title: sanitizeText(title),
             author: sanitizeText(author),
@@ -225,13 +256,13 @@ exports.addBook = async (req, res) => {
             locationInHouse: sanitizeText(locationInHouse),
             description: sanitizeText(description),
             statuses: [],
+            publicByUsers: isPublicBool ? [userId] : [],
             createdAt: now,
             updatedAt: now,
         };
 
         // If a status was provided at add time, build the full status entry
         if (userStatus && ALLOWED_STATUSES.includes(userStatus)) {
-            const userId = new ObjectId(req.user.id);
             const { startedAt, finishedAt, rating } = req.body;
 
             const dv = validate.validateReadingDates({ startedAt, finishedAt });
@@ -239,7 +270,7 @@ exports.addBook = async (req, res) => {
             const rv = validate.validateRating(rating);
             if (!rv.valid) return res.status(400).json({ message: rv.message });
 
-            const statusEntry = { userId, status: userStatus, isPublic: isPublic === true };
+            const statusEntry = { userId, status: userStatus };
 
             if (userStatus === "reading" || userStatus === "read") {
                 statusEntry.startedAt = startedAt ? new Date(startedAt) : now;
@@ -258,6 +289,9 @@ exports.addBook = async (req, res) => {
         res.status(201).json({ data: { ...created, ...extractUserStatus(created, req.user.id) } });
 
     } catch (error) {
+        if (error.code === 11000) {
+            return res.status(400).json({ message: "A book with this title and author already exists" });
+        }
         res.status(500).json({
             message: "Failed to add book",
             error: process.env.NODE_ENV === "development" ? error.message : undefined,
@@ -276,7 +310,6 @@ exports.updateBook = async (req, res) => {
         if (!idv.valid) return res.status(400).json({ message: idv.message });
 
         const { title, author, genre, house, language, locationInHouse, description, userStatus, isPublic } = req.body;
-
         const uv = validate.validateBookBody({ title, author, house, genre, description, userStatus });
         if (!uv.valid) return res.status(400).json({ message: uv.message });
 
@@ -307,15 +340,20 @@ exports.updateBook = async (req, res) => {
         let statusEntry = null;
         if (userStatus) {
             const now = new Date();
-            statusEntry = { userId, status: userStatus, isPublic: isPublic === true };
+            statusEntry = { userId, status: userStatus };
 
             if (userStatus === "reading" || userStatus === "read") {
                 if (existingEntry?.startedAtLocked) {
+                    // Already locked — preserve, ignore incoming value
                     statusEntry.startedAt = existingEntry.startedAt;
                     statusEntry.startedAtLocked = true;
                 } else if (startedAt !== undefined && startedAt !== null) {
-                    statusEntry.startedAt = new Date(startedAt);
-                    statusEntry.startedAtLocked = true;
+                    const incoming = new Date(startedAt);
+                    const existing = existingEntry?.startedAt ? new Date(existingEntry.startedAt) : null;
+                    // Only lock if the user actually changed the date (or there was no existing date)
+                    const isRealEdit = !existing || incoming.getTime() !== existing.getTime();
+                    statusEntry.startedAt = incoming;
+                    statusEntry.startedAtLocked = isRealEdit;
                 } else if (existingEntry?.startedAt) {
                     statusEntry.startedAt = existingEntry.startedAt;
                     statusEntry.startedAtLocked = false;
@@ -327,11 +365,15 @@ exports.updateBook = async (req, res) => {
 
             if (userStatus === "read") {
                 if (existingEntry?.finishedAtLocked) {
+                    // Already locked — preserve, ignore incoming value
                     statusEntry.finishedAt = existingEntry.finishedAt;
                     statusEntry.finishedAtLocked = true;
                 } else if (finishedAt !== undefined && finishedAt !== null) {
-                    statusEntry.finishedAt = new Date(finishedAt);
-                    statusEntry.finishedAtLocked = true;
+                    const incomingF = new Date(finishedAt);
+                    const existingF = existingEntry?.finishedAt ? new Date(existingEntry.finishedAt) : null;
+                    const isRealEditF = !existingF || incomingF.getTime() !== existingF.getTime();
+                    statusEntry.finishedAt = incomingF;
+                    statusEntry.finishedAtLocked = isRealEditF;
                 } else if (existingEntry?.finishedAt) {
                     statusEntry.finishedAt = existingEntry.finishedAt;
                     statusEntry.finishedAtLocked = false;
@@ -348,7 +390,9 @@ exports.updateBook = async (req, res) => {
             }
         }
 
-        // Pull old status entry and update core fields atomically
+        const isPublicBool = isPublic === true || isPublic === "true";
+
+        // Atomic update: core fields + pull old status entry + update publicByUsers
         await books.updateOne(
             { _id: bookId },
             {
@@ -363,14 +407,28 @@ exports.updateBook = async (req, res) => {
                     updatedAt: new Date(),
                 },
                 $pull: { statuses: { userId } },
+                // Toggle public visibility — $addToSet / $pull are separate ops so we do it after
             }
         );
+
+        // Handle publicByUsers — independent of reading status
+        if (isPublicBool) {
+            await books.updateOne({ _id: bookId }, { $addToSet: { publicByUsers: userId } });
+        } else {
+            await books.updateOne({ _id: bookId }, { $pull: { publicByUsers: userId } });
+        }
 
         // Push new status entry if status is set
         if (statusEntry) {
             await books.updateOne(
                 { _id: bookId },
                 { $push: { statuses: statusEntry } }
+            );
+        } else if (existingEntry) {
+            // No status change — re-push the existing entry unchanged
+            await books.updateOne(
+                { _id: bookId },
+                { $push: { statuses: existingEntry } }
             );
         }
 
@@ -384,6 +442,9 @@ exports.updateBook = async (req, res) => {
         });
 
     } catch (error) {
+        if (error.code === 11000) {
+            return res.status(400).json({ message: "A book with this title and author already exists" });
+        }
         res.status(500).json({
             message: "Update failed",
             error: process.env.NODE_ENV === "development" ? error.message : undefined,

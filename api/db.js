@@ -1,13 +1,8 @@
-const { MongoClient, ServerApiVersion } = require("mongodb");
+const { MongoClient } = require("mongodb");
 
 // ─── Client ───────────────────────────────────────────────────────────────────
 
 const client = new MongoClient(process.env.MONGODB_URI, {
-    serverApi: {
-        version: ServerApiVersion.v1,
-        strict: true,
-        deprecationErrors: true,
-    },
     compressors: ["zstd"],
 });
 
@@ -43,6 +38,8 @@ async function ensureIndexes() {
     await books.createIndex({ house: 1, _id: 1 });
     await books.createIndex({ createdAt: -1 });
     await books.createIndex({ "statuses.userId": 1, "statuses.status": 1 });
+    await books.createIndex({ language: 1 });
+    await books.createIndex({ title: 1, author: 1 }, { unique: true });
 
     // Reference data — case-insensitive unique index on name
     const collation = { locale: "en", strength: 2 };

@@ -56,6 +56,13 @@ exports.login = async (req, res) => {
             });
         }
 
+        // New users have no password yet — redirect them to set one
+        if (user.firstLogin || !user.password) {
+            return res.status(400).json({
+                message: "Please set your password first. Use \"First time logging in?\" on the login page."
+            });
+        }
+
         const passwordValid = await comparePassword(password, user.password);
 
         if (!passwordValid) {
@@ -112,47 +119,70 @@ exports.login = async (req, res) => {
 };
 
 
-/* ═══════════════════════ SEND RESET OTP ═════════════════════════════════════ */
+/* ═══════════════════════ CHECK RESET METHOD ════════════════════════════════ */
+// Determines which password reset method applies for this email:
+//   "otp"           — superadmin, OTP sent via email
+//   "approved"      — admin has pre-approved this reset, no OTP needed
+//   "contact_admin" — regular user with no approval, must contact superadmin
+//
+// Always returns 200 — never reveals whether the email exists.
 
 exports.sendResetOTP = async (req, res) => {
     try {
         const { email } = req.body;
 
         const ev = validate.validateEmail({ email });
-        if (!ev.valid) return res.status(200).json({ message: "OTP sent successfully" });
+        if (!ev.valid) return res.status(200).json({ method: "contact_admin" });
 
         const users = getUsers();
-        const user = await users.findOne({ email });
+        const user = await users.findOne({ email: email.toLowerCase().trim() });
 
+        // Unknown email — return contact_admin silently (don't reveal user existence)
         if (!user) {
-            return res.status(200).json({ message: "OTP sent successfully" });
+            return res.status(200).json({ method: "contact_admin" });
         }
 
-        const otp = Math.floor(100000 + Math.random() * 900000).toString();
+        // Superadmin — OTP flow via email (Resend account owner, delivery works)
+        if (user.role === "superadmin") {
+            const otp = Math.floor(100000 + Math.random() * 900000).toString();
 
-        await users.updateOne(
-            { _id: user._id },
-            {
-                $set: {
-                    resetOTP: crypto.createHash("sha256").update(otp).digest("hex"),
-                    otpExpiry: new Date(Date.now() + OTP_EXPIRY_MS),
-                    otpAttempts: 0,
-                },
-            }
-        );
+            await users.updateOne(
+                { _id: user._id },
+                {
+                    $set: {
+                        resetOTP: crypto.createHash("sha256").update(otp).digest("hex"),
+                        otpExpiry: new Date(Date.now() + OTP_EXPIRY_MS),
+                        otpAttempts: 0,
+                    },
+                }
+            );
 
-        await resend.emails.send({
-            from: "Home Library <onboarding@resend.dev>",
-            to: email,
-            subject: "Password Reset OTP",
-            text: `Your OTP is: ${otp}\n\nThis code expires in 10 minutes. Do not share it with anyone.`,
-        });
+            await resend.emails.send({
+                from: "Home Library <onboarding@resend.dev>",
+                to: email,
+                subject: "Password Reset OTP",
+                text: `Your OTP is: ${otp}\n\nThis code expires in 10 minutes. Do not share it with anyone.`,
+            });
 
-        return res.status(200).json({ message: "OTP sent successfully" });
+            return res.status(200).json({ method: "otp" });
+        }
+
+        // New user who hasn't set a password yet — first login flow
+        if (user.firstLogin) {
+            return res.status(200).json({ method: "first_login" });
+        }
+
+        // Superadmin has pre-approved this user's reset — no OTP needed
+        if (user.passwordResetApproved) {
+            return res.status(200).json({ method: "approved" });
+        }
+
+        // All other users — must contact superadmin to get approval
+        return res.status(200).json({ method: "contact_admin" });
 
     } catch (error) {
         return res.status(500).json({
-            message: "Failed to send OTP",
+            message: "Failed to process reset request",
             error: process.env.NODE_ENV === "development" ? error.message : undefined,
         });
     }
@@ -160,39 +190,76 @@ exports.sendResetOTP = async (req, res) => {
 
 
 /* ═══════════════════════ RESET PASSWORD ════════════════════════════════════ */
+// Handles two flows:
+//   OTP flow      — superadmin with valid OTP (otp field present)
+//   Approved flow — user with passwordResetApproved: true (no otp needed)
 
 exports.resetPassword = async (req, res) => {
     try {
         const { email, otp, newPassword } = req.body;
 
-        const rv = validate.validateOTPBody({ email, otp, newPassword });
-        if (!rv.valid) return res.status(400).json({ message: "Invalid or expired OTP" });
+        // Validate new password strength (shared for both flows)
+        const pv = validate.validateOTPBody({ email, otp: otp || "000000", newPassword });
+        if (!pv.valid) return res.status(400).json({ message: pv.message });
 
         const users = getUsers();
-        const user = await users.findOne({ email });
+        const user = await users.findOne({ email: email?.toLowerCase().trim() });
 
         if (!user) {
-            return res.status(400).json({ message: "Invalid or expired OTP" });
+            return res.status(400).json({ message: "Invalid or expired request" });
         }
 
-        if ((user.otpAttempts || 0) >= OTP_MAX_ATTEMPTS) {
-            return res.status(400).json({
-                message: "Too many failed attempts. Please request a new OTP."
-            });
-        }
+        // ── OTP flow (superadmin) ─────────────────────────────────────────────
+        if (otp) {
+            if ((user.otpAttempts || 0) >= OTP_MAX_ATTEMPTS) {
+                return res.status(400).json({
+                    message: "Too many failed attempts. Please request a new OTP."
+                });
+            }
 
-        const hashedOTP = crypto.createHash("sha256").update(otp).digest("hex");
+            const hashedOTP = crypto.createHash("sha256").update(otp).digest("hex");
 
-        if (
-            user.resetOTP !== hashedOTP ||
-            !user.otpExpiry ||
-            new Date(user.otpExpiry) < new Date()
-        ) {
+            if (
+                user.resetOTP !== hashedOTP ||
+                !user.otpExpiry ||
+                new Date(user.otpExpiry) < new Date()
+            ) {
+                await users.updateOne(
+                    { _id: user._id },
+                    { $inc: { otpAttempts: 1 } }
+                );
+                return res.status(400).json({ message: "Invalid or expired OTP" });
+            }
+
+            const hashedPassword = await hashPassword(newPassword);
+
             await users.updateOne(
                 { _id: user._id },
-                { $inc: { otpAttempts: 1 } }
+                {
+                    $set: { password: hashedPassword, loginAttempts: 0 },
+                    $unset: { resetOTP: "", otpExpiry: "", otpAttempts: "", lockUntil: "" },
+                }
             );
-            return res.status(400).json({ message: "Invalid or expired OTP" });
+
+            return res.status(200).json({ message: "Password reset successful" });
+        }
+
+        // ── First login flow (new user, no password set yet) ─────────────────
+        if (user.firstLogin) {
+            const hashedPassword = await hashPassword(newPassword);
+            await users.updateOne(
+                { _id: user._id },
+                {
+                    $set: { password: hashedPassword, loginAttempts: 0 },
+                    $unset: { firstLogin: "", lockUntil: "" },
+                }
+            );
+            return res.status(200).json({ message: "Password set successfully" });
+        }
+
+        // ── Approved flow (admin pre-approved) ────────────────────────────────
+        if (!user.passwordResetApproved) {
+            return res.status(403).json({ message: "Password reset not approved. Contact your admin." });
         }
 
         const hashedPassword = await hashPassword(newPassword);
@@ -200,8 +267,8 @@ exports.resetPassword = async (req, res) => {
         await users.updateOne(
             { _id: user._id },
             {
-                $set: { password: hashedPassword, loginAttempts: 0 },
-                $unset: { resetOTP: "", otpExpiry: "", otpAttempts: "", lockUntil: "" },
+                $set: { password: hashedPassword, loginAttempts: 0, passwordResetApproved: false },
+                $unset: { lockUntil: "" },
             }
         );
 

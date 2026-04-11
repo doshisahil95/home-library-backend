@@ -4,8 +4,7 @@ const { validateObjectId } = require("../utils/validate.js");
 
 // ─── GET /public/:userId ──────────────────────────────────────────────────────
 // No authentication required — this is the public-facing endpoint.
-// Returns only books where the specified user has isPublic: true in their
-// status entry. Strips all private data (other users' statuses, locationInHouse,
+// Returns only books where the specified user is in the publicByUsers array. Strips all private data (other users' statuses, locationInHouse,
 // reading dates, ratings) before responding.
 
 exports.getPublicBooks = async (req, res) => {
@@ -26,14 +25,9 @@ exports.getPublicBooks = async (req, res) => {
         const books = getBooks();
         const userObjectId = new ObjectId(userId);
 
-        // Find all books where this user has isPublic: true in their status entry
+        // Find all books where this user is in the publicByUsers array
         const results = await books.find({
-            statuses: {
-                $elemMatch: {
-                    userId: userObjectId,
-                    isPublic: true,
-                },
-            },
+            publicByUsers: userObjectId,
         })
             .sort({ title: 1 })
             .toArray();

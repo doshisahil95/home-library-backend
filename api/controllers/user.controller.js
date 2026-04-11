@@ -12,17 +12,17 @@ exports.updateTheme = async (req, res) => {
         if (!tv.valid) return res.status(400).json({ message: tv.message });
 
         const users = getUsers();
-        const { value } = await users.findOneAndUpdate(
+        const result = await users.findOneAndUpdate(
             { _id: new ObjectId(req.user.id) },
             { $set: { theme, updatedAt: new Date() } },
             { returnDocument: "after" }
         );
 
-        if (!value) {
+        if (!result) {
             return res.status(404).json({ message: "User not found" });
         }
 
-        res.json({ message: "Theme updated", theme: value.theme });
+        res.json({ message: "Theme updated", theme: result.theme });
 
     } catch (err) {
         res.status(500).json({ message: "Failed to update theme" });
@@ -159,5 +159,76 @@ exports.getDiscoverData = async (req, res) => {
             message: "Failed to fetch discover data",
             error: process.env.NODE_ENV === "development" ? error.message : undefined,
         });
+    }
+};
+
+
+// ─── Update profile ───────────────────────────────────────────────────────────
+// Generic profile update — accepts any updatable user fields.
+// Currently supports: name. Extensible for future fields.
+
+exports.updateProfile = async (req, res) => {
+    try {
+        const { name } = req.body;
+
+        if (!name || !name.trim()) {
+            return res.status(400).json({ message: "Name is required" });
+        }
+        if (name.trim().length > 100) {
+            return res.status(400).json({ message: "Name must be 100 characters or fewer" });
+        }
+
+        const users = getUsers();
+        const result = await users.findOneAndUpdate(
+            { _id: new ObjectId(req.user.id) },
+            { $set: { name: name.trim(), updatedAt: new Date() } },
+            { returnDocument: "after" }
+        );
+
+        if (!result) return res.status(404).json({ message: "User not found" });
+
+        res.json({ message: "Profile updated", name: result.name });
+
+    } catch (err) {
+        res.status(500).json({ message: "Failed to update profile" });
+    }
+};
+
+
+// ─── Make all books private ───────────────────────────────────────────────────
+// Removes the current user from publicByUsers on all books in one operation.
+
+exports.makeAllPrivate = async (req, res) => {
+    try {
+        const userId = new ObjectId(req.user.id);
+        const books = getBooks();
+
+        const result = await books.updateMany(
+            { publicByUsers: userId },
+            { $pull: { publicByUsers: userId } }
+        );
+
+        res.json({
+            message: "All books made private",
+            updated: result.modifiedCount,
+        });
+
+    } catch (err) {
+        res.status(500).json({ message: "Failed to make books private" });
+    }
+};
+
+
+// ─── Get public book count ────────────────────────────────────────────────────
+// Returns the number of books the current user has made public.
+
+exports.getPublicCount = async (req, res) => {
+    try {
+        const userId = new ObjectId(req.user.id);
+        const books = getBooks();
+        const count = await books.countDocuments({ publicByUsers: userId });
+        res.json({ count });
+    } catch (err) {
+        res.status(500).json({ message: "Failed to get public count" });
     }
 };

@@ -11,12 +11,48 @@ const { connectDB, disconnectDB } = require("./api/db.js");
 const app = express();
 
 // ─── Startup validation ───────────────────────────────────────────────────────
+// Every environment variable the app depends on is validated here before
+// anything else runs. Each entry has:
+//   check  — a function that returns true if the value is acceptable
+//   hint   — shown in the console log if the check fails, so the cause is
+//             immediately obvious without reading the source code
+//
+// isPositiveInt checks that a value parses to a finite positive integer —
+// used for numeric config like rate limit counts and windows.
+
+const isPositiveInt = (v) => {
+    const n = parseInt(v);
+    return Number.isFinite(n) && n > 0;
+};
 
 const REQUIRED_ENV = {
+    // ── Database ──────────────────────────────────────────────────────────────
     MONGODB_URI: { check: (v) => !!v, hint: "MongoDB Atlas connection string" },
-    JWT_SECRET: { check: (v) => v?.length >= 32, hint: "Must be at least 32 characters" },
-    CORS_ORIGIN: { check: (v) => !!v, hint: "Frontend URL e.g. https://your-app.vercel.app" },
+    DATABASE_NAME: { check: (v) => !!v, hint: "Database name in Atlas e.g. homeLibrary" },
+
+    // ── Auth ──────────────────────────────────────────────────────────────────
+    JWT_SECRET: { check: (v) => v?.length >= 32, hint: "Must be at least 32 characters — generate with: node -e \"console.log(require('crypto').randomBytes(48).toString('hex'))\"" },
+    JWT_EXPIRY: { check: (v) => !!v, hint: "JWT expiry e.g. 4h" },
+
+    // ── Email ─────────────────────────────────────────────────────────────────
     RESEND_API_KEY: { check: (v) => !!v, hint: "API key from resend.com" },
+
+    // ── CORS ──────────────────────────────────────────────────────────────────
+    CORS_ORIGIN: { check: (v) => !!v, hint: "Frontend URL e.g. https://your-app.vercel.app" },
+
+    // ── Login brute-force protection ──────────────────────────────────────────
+    LOGIN_MAX_ATTEMPTS: { check: isPositiveInt, hint: "Max failed login attempts before lockout e.g. 5" },
+    LOGIN_LOCKOUT_MS: { check: isPositiveInt, hint: "Lockout duration in ms e.g. 900000 (15 min)" },
+
+    // ── OTP ───────────────────────────────────────────────────────────────────
+    OTP_MAX_ATTEMPTS: { check: isPositiveInt, hint: "Max wrong OTP attempts before rejection e.g. 5" },
+    OTP_EXPIRY_MS: { check: isPositiveInt, hint: "OTP validity window in ms e.g. 600000 (10 min)" },
+
+    // ── Rate limiting ─────────────────────────────────────────────────────────
+    AUTH_RATE_LIMIT_WINDOW_MS: { check: isPositiveInt, hint: "Auth rate limit window in ms e.g. 900000 (15 min)" },
+    AUTH_RATE_LIMIT_MAX: { check: isPositiveInt, hint: "Max auth requests per window e.g. 30" },
+    GLOBAL_RATE_LIMIT_WINDOW_MS: { check: isPositiveInt, hint: "Global rate limit window in ms e.g. 900000 (15 min)" },
+    GLOBAL_RATE_LIMIT_MAX: { check: isPositiveInt, hint: "Max global requests per window e.g. 300" },
 };
 
 const missing = Object.entries(REQUIRED_ENV).filter(([key, { check }]) =>
@@ -102,24 +138,31 @@ app.use(express.json({ limit: "50kb" }));
 app.use(express.urlencoded({ limit: "50kb", extended: true }));
 
 // ─── Rate limiting ────────────────────────────────────────────────────────────
+// Two tiers — both fully driven by env vars, no hardcoded fallbacks.
+// Validation above guarantees these parse to valid positive integers.
+//
+// authLimiter   — tight limit on login / OTP / reset endpoints
+// globalLimiter — broader limit applied to all traffic
 
 const authLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000,
-    max: 10,
+    windowMs: parseInt(process.env.AUTH_RATE_LIMIT_WINDOW_MS),
+    max: parseInt(process.env.AUTH_RATE_LIMIT_MAX),
     message: "Too many attempts. Please try again later.",
     standardHeaders: true,
     legacyHeaders: false,
 });
 
 const globalLimiter = rateLimit({
-    windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000,
-    max: parseInt(process.env.RATE_LIMIT_MAX) || 300,
+    windowMs: parseInt(process.env.GLOBAL_RATE_LIMIT_WINDOW_MS),
+    max: parseInt(process.env.GLOBAL_RATE_LIMIT_MAX),
     message: "You have exceeded the request limit.",
     standardHeaders: true,
     legacyHeaders: false,
 });
 
 app.use(globalLimiter);
+
+// Auth-specific limiter stored in app.locals so routes can apply it selectively
 app.locals.authLimiter = authLimiter;
 
 // ─── Cache control ────────────────────────────────────────────────────────────

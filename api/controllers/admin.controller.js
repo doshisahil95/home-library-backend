@@ -326,7 +326,7 @@ function normaliseRow(raw) {
         house: (raw.house || "").trim(),
         genres: (raw.genre || "").split(";").map((g) => g.trim()).filter(Boolean),
         language: (raw.language || "").trim(),
-        locationInHouse: (raw.locationinhouseue || raw.locationinhouse || "").trim(),
+        locationInHouse: (raw.locationinhouse || "").trim(),
         description: (raw.description || "").trim(),
         makePublic: makePublicRaw === "true" || makePublicRaw === "1" || makePublicRaw === "yes",
     };
@@ -440,8 +440,6 @@ exports.validateCSV = async (req, res) => {
             validCount: validRows.length,
             errorCount: errors.length,
             errors,
-            // Return valid rows so the confirm step can re-validate without re-parsing
-            validRows,
         });
 
     } catch (error) {
@@ -495,6 +493,7 @@ exports.importCSV = async (req, res) => {
         let added = 0;
         let stoppedEarly = false;
         const now = new Date();
+        const importingUserId = new ObjectId(req.user.id);
 
         for (const { rowNumber, data } of rows) {
             const norm = normaliseRow(data);
@@ -541,7 +540,6 @@ exports.importCSV = async (req, res) => {
                 ? (languageDocs.find((l) => l.name.toLowerCase() === norm.language.toLowerCase())?.name || norm.language)
                 : "";
 
-            const importingUserId = new ObjectId(req.user.id);
             try {
                 await books.insertOne({
                     title: norm.title,

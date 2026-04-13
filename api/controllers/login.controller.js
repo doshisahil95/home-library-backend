@@ -203,8 +203,11 @@ exports.resetPassword = async (req, res) => {
     try {
         const { email, otp, newPassword } = req.body;
 
-        // Validate new password strength (shared for both flows)
-        const pv = validate.validateOTPBody({ email, otp: otp || "000000", newPassword });
+        // Validate email and password strength — shared for all flows
+        if (!email || !newPassword) {
+            return res.status(400).json({ message: "Email and new password are required" });
+        }
+        const pv = validate.validateNewPassword({ password: newPassword });
         if (!pv.valid) return res.status(400).json({ message: pv.message });
 
         const users = getUsers();

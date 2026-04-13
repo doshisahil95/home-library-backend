@@ -12,72 +12,82 @@
 
 ## Step 1 — Prepare your backend repo
 
-1. Make sure your `.env` file is listed in `.gitignore` and has never been committed to GitHub.
-
+1. Make sure `.env` is in `.gitignore` and has never been committed.
 2. Push all changes to GitHub.
 
 ---
 
 ## Step 2 — Deploy the backend on Railway
 
-1. Go to https://railway.app and sign up / log in with GitHub.
+1. Go to [railway.app](https://railway.app) and sign up / log in with GitHub.
 
-2. Click **New Project** → **Deploy from GitHub repo** → select `home-library-backend`.
+2. Click **New Project** → **Deploy from GitHub repo** → select your backend repo.
 
-   > **If no repositories appear** — Railway needs permission to access your GitHub repos. Go to [github.com/settings/installations](https://github.com/settings/installations) → find Railway → click **Configure** → under Repository access, select your repos → Save. Then go back to Railway and try again.
+   > **If no repositories appear** — go to [github.com/settings/installations](https://github.com/settings/installations) → find Railway → **Configure** → under Repository access, select your repos → Save. Then retry in Railway.
 
-3. Railway will auto-detect it as a Node.js app and start deploying.
+3. Railway will auto-detect Node.js and start deploying.
 
-4. Once deployed, go to your service → **Variables** tab and add every variable below. Enter raw values only — do not wrap values in quotes.
+4. Go to your service → **Variables** tab and add every variable below. Enter raw values — no surrounding quotes.
 
    | Variable | Value |
    |---|---|
    | `MONGODB_URI` | Your Atlas connection string |
    | `DATABASE_NAME` | Your database name in Atlas |
-   | `APP_NAME` | `HomeLibrary` |
    | `JWT_SECRET` | A random 32+ character string (see below) |
+   | `JWT_EXPIRY` | `4h` |
    | `RESEND_API_KEY` | Your Resend API key (see below) |
    | `CORS_ORIGIN` | Leave blank for now — fill in after Step 5 |
    | `NODE_ENV` | `production` |
-   | `RATE_LIMIT_WINDOW_MS` | `900000` |
-   | `RATE_LIMIT_MAX` | `300` |
+   | `LOGIN_MAX_ATTEMPTS` | `5` |
+   | `LOGIN_LOCKOUT_MS` | `900000` |
+   | `OTP_MAX_ATTEMPTS` | `5` |
+   | `OTP_EXPIRY_MS` | `600000` |
+   | `AUTH_RATE_LIMIT_WINDOW_MS` | `900000` |
+   | `AUTH_RATE_LIMIT_MAX` | `30` |
+   | `GLOBAL_RATE_LIMIT_WINDOW_MS` | `900000` |
+   | `GLOBAL_RATE_LIMIT_MAX` | `300` |
    | `PORT` | `3000` |
 
-   > **JWT_SECRET** must be at least 32 characters — the server will refuse to start if it is shorter. Generate one by running this in your terminal:
+   > **JWT_SECRET** — generate a strong one:
    > ```bash
    > node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
    > ```
 
-   > **RESEND_API_KEY** — sign up for a free account at [resend.com](https://resend.com) → API Keys → Create API Key → name it `HomeLibrary` → copy the key. The free tier allows 3,000 emails/month which is more than enough. The key is only shown once so copy it immediately.
+   > **RESEND_API_KEY** — sign up at [resend.com](https://resend.com) → API Keys → Create API Key → name it `HomeLibrary` → copy immediately (shown once only). The free tier gives 3,000 emails/month. Note: Resend free tier only delivers to the email address that owns the account — this is used for the superadmin's OTP flow only.
 
-5. Go to **Settings** → **Networking** → **Generate Domain** to get your public backend URL (e.g. `https://home-library-backend-production.up.railway.app`). Copy this — you need it in the next steps.
+5. Go to **Settings** → **Networking** → **Generate Domain** to get your public backend URL (e.g. `https://home-library-backend-production.up.railway.app`). Copy it — you need it in Steps 3 and 5.
 
-   > **Root Directory** — leave this blank in Railway Settings → Build. Do not set it to `/`.
+   > Leave **Root Directory** blank in Railway Settings → Build.
 
-   > **Spending limit** — go to Railway → Settings → Usage and set a spending limit of $5 to cap costs.
+   > Set a spending limit under **Settings → Usage** (recommended: $5) to cap costs.
 
 ---
 
 ## Step 3 — Prepare your frontend repo
 
-1. Make sure `.env.local` is listed in `.gitignore` and has never been committed to GitHub.
+1. Make sure `.env.local` is in `.gitignore` and has never been committed.
 
-2. Create `.env.local` in your frontend root for local development:
+2. Your `.env.local` for local development should contain:
    ```
    VITE_API_BASE=http://localhost:3000
    ```
 
-3. Update `vercel.json` — replace `your-railway-domain.up.railway.app` in the `connect-src` directive with your actual Railway URL from Step 2.
+3. Update `vercel.json` — replace the placeholder in the `connect-src` directive with your actual Railway URL from Step 2:
+   ```
+   connect-src 'self' https://your-railway-url.up.railway.app
+   ```
 
-4. Push all changes to GitHub.
+4. Delete `src/App.css` if it still exists — it is unused boilerplate from the Vite starter template.
+
+5. Push all changes to GitHub.
 
 ---
 
 ## Step 4 — Deploy the frontend on Vercel
 
-1. Go to https://vercel.com and sign up / log in with GitHub.
+1. Go to [vercel.com](https://vercel.com) and sign up / log in with GitHub.
 
-2. Click **Add New Project** → select `home-library-frontend`.
+2. Click **Add New Project** → select your frontend repo.
 
 3. Vercel will auto-detect Vite. Leave all build settings as default.
 
@@ -87,64 +97,68 @@
    |---|---|
    | `VITE_API_BASE` | Your Railway URL from Step 2 — must include `https://` prefix |
 
-   > The `https://` prefix is required. Without it, API calls will be treated as relative paths and appended to the Vercel domain instead of going to Railway.
+   > The `https://` prefix is required. Without it, Vite will treat it as a relative path and append it to the Vercel domain instead.
 
-5. Click **Deploy**. Vercel will give you a URL like `https://home-library-frontend.vercel.app`. Copy this — you need it for the next step.
+5. Click **Deploy**. Copy your Vercel URL (e.g. `https://home-library.vercel.app`) — you need it for the next step.
 
 ---
 
 ## Step 5 — Set CORS_ORIGIN on Railway
 
-Now that you have your Vercel URL, go back to Railway:
-
-1. Open your backend service → **Variables** tab.
+1. Go back to Railway → your backend service → **Variables** tab.
 2. Set `CORS_ORIGIN` to your Vercel URL (raw value, no quotes):
    ```
-   CORS_ORIGIN=https://home-library-frontend.vercel.app
+   https://home-library.vercel.app
    ```
-3. Railway will automatically redeploy with the new variable.
+3. Railway will automatically redeploy.
 
 ---
 
-## Step 6 — Seed users
+## Step 6 — Create the superadmin user
 
-Run the user seeding script against your production MongoDB:
+Connect to your Atlas cluster and insert the superadmin user directly:
 
-```bash
-MONGODB_URI="your-atlas-uri" DATABASE_NAME="homeLibrary" node add-users.js
+```javascript
+db.users.insertOne({
+  name: "Your Name",
+  email: "you@example.com",
+  password: null,
+  firstLogin: true,
+  role: "superadmin",
+  theme: "light",
+  loginAttempts: 0,
+  createdAt: new Date(),
+  updatedAt: new Date()
+})
 ```
 
-Or if you have a `.env` file locally:
+Then open your Vercel URL, click **First time logging in?**, enter your email, and set your password.
 
-```bash
-node add-users.js
-```
+> The superadmin's email must match the email address that owns your Resend account for OTP delivery to work.
 
 ---
 
 ## Step 7 — Verify everything works
 
-1. Open your Vercel URL in a browser.
-2. Log in with a seeded user — you should reach the Dashboard without errors.
-3. Open browser DevTools → **Network** tab — confirm all API calls are going to your Railway URL over `https://` and returning 200 responses.
-4. Check the response headers on any request — `Strict-Transport-Security` should be present.
-5. Run through this checklist:
-   - [ ] Login works
-   - [ ] Books page loads
-   - [ ] Add / edit / delete a book
-   - [ ] Search by title or author works
-   - [ ] Filter by house / genre / status works — check multi-select genre (AND) works correctly
-   - [ ] Wrong password 5 times — account locks with a message
-   - [ ] Forgot password — OTP email arrives, resend count shown, back to login link works
+1. Open your Vercel URL and log in.
+2. Open browser DevTools → **Network** tab — confirm API calls go to your Railway URL over `https://` and return 200.
+3. Check a response header — `Strict-Transport-Security` should be present.
+4. Run through this checklist:
+   - [ ] Login works and reaches Dashboard
+   - [ ] Books page loads, add/edit/delete a book
+   - [ ] Search by title and author works
+   - [ ] Filters work — try house, genre (multi-select AND), status
+   - [ ] Wrong password 5 times → account locked with message
+   - [ ] Forgot password (superadmin email) → OTP arrives → reset works
    - [ ] Theme toggle saves and persists on refresh
-   - [ ] On mobile — book cards render instead of table, sidebar opens/closes, modals fit screen
-   - [ ] On mobile — filter panel stacks to single column, pagination shows prev/next only
+   - [ ] Settings modal opens — name edit, public link copy work
+   - [ ] Admin panel → Reference Data tab works for adding/editing/deleting
+   - [ ] Admin panel → Add User → new user can log in via "First time logging in?"
+   - [ ] Mobile — cards render instead of table, sidebar opens/closes, modals fit screen
 
 ---
 
 ## Ongoing deployments
-
-After the initial setup, deploying any change is just:
 
 ```bash
 git add .
@@ -158,32 +172,34 @@ Both Vercel and Railway watch your GitHub repos and redeploy automatically withi
 
 ## Troubleshooting
 
-**No repositories found in Railway**
-Railway needs GitHub access. Go to [github.com/settings/installations](https://github.com/settings/installations) → Configure Railway → grant access to your repos → Save.
+**Server refuses to start on Railway**
+Check Railway logs. The startup validation will print which env var is missing or invalid. The most common cause is a missing variable or one wrapped in quotes (Railway stores values literally).
 
-**404 on login after deploying frontend**
-Check `VITE_API_BASE` in Vercel — it must include the `https://` prefix. Without it the URL becomes a relative path appended to your Vercel domain. Redeploy after fixing.
+**No repositories found in Railway**
+Go to [github.com/settings/installations](https://github.com/settings/installations) → Configure Railway → grant access to your repos → Save.
+
+**404 on all API calls after deploying frontend**
+`VITE_API_BASE` is missing the `https://` prefix. Vite embeds this at build time — add the prefix in Vercel environment variables and redeploy.
 
 **CORS errors in the browser**
-Railway stores env var values literally — make sure there are no quote marks around the value of `CORS_ORIGIN`. It should be the raw URL with no surrounding punctuation.
+`CORS_ORIGIN` in Railway has a typo or extra quotes. It must be the raw Vercel URL with no surrounding punctuation. Removing and re-adding it in Railway fixes this.
 
 **500 on login**
-Check Railway logs immediately after the failed attempt. Change `NODE_ENV` to `development` temporarily — the full error will appear in the browser Network tab under the failed request's Response. Common causes:
+Check Railway logs. Set `NODE_ENV` to `development` temporarily to see the full error in the Network tab. Common causes:
 - `JWT_SECRET` missing or under 32 characters
-- MongoDB connection string wrong after a password reset
-- Mongoose pre-save hook issue
+- `MONGODB_URI` wrong or Atlas cluster not reachable
 
-**API calls going to wrong URL**
-Open DevTools → Network → click the failed request → check the full Request URL. If it shows `https://your-vercel-app.vercel.app/your-railway-domain...` then `VITE_API_BASE` is missing `https://`.
+**Atlas not reachable from Railway**
+In Atlas → Network Access → Add IP Address → `0.0.0.0/0` (allow all). This is safe for a personal app since MongoDB still requires username and password.
 
 **OTP emails not arriving**
-Check Railway logs for `Warning: RESEND_API_KEY is not set`. If the key is set correctly, log into your Resend dashboard and check the **Emails** section — it shows delivery status for every email sent. If emails are being sent but not arriving, check your spam folder.
-
-**Railway shows server running but app doesn't work**
-Check Railway logs for `Error connecting to MongoDB`. This usually means `MONGODB_URI` is wrong or your Atlas cluster's IP access list is blocking Railway. In Atlas → Network Access, add `0.0.0.0/0` to allow all IPs (acceptable for a personal app since MongoDB still requires username and password).
+Check your Resend dashboard → Emails section for delivery status. The OTP flow only works if the target email matches the email that owns the Resend account (the superadmin's email). All other users reset via the admin-approval flow.
 
 **Vercel build fails**
-Make sure `VITE_API_BASE` is set in Vercel's environment variables before the build runs. Vite embeds these values at build time — changing them requires a redeploy.
+`VITE_API_BASE` must be set in Vercel environment variables before the build runs. Vite embeds env vars at build time — they must exist when you click Deploy, not after.
+
+**API calls going to the wrong URL**
+DevTools → Network → click a failing request → check the full Request URL. If it starts with `https://your-vercel-app.vercel.app/https://...` then the `VITE_API_BASE` value in Vercel includes an extra `https://` or something similar.
 
 ---
 
@@ -195,14 +211,20 @@ Make sure `VITE_API_BASE` is set in Vercel's environment variables before the bu
 |---|---|
 | `MONGODB_URI` | MongoDB Atlas connection string |
 | `DATABASE_NAME` | Database name in Atlas |
-| `APP_NAME` | Identifier shown in Atlas monitoring |
-| `JWT_SECRET` | Secret used to sign JWT tokens — must be 32+ characters |
-| `RESEND_API_KEY` | API key from resend.com for sending OTP emails |
+| `JWT_SECRET` | Secret for signing JWT tokens — must be 32+ characters |
+| `JWT_EXPIRY` | Token expiry e.g. `4h` |
+| `RESEND_API_KEY` | API key from resend.com |
 | `CORS_ORIGIN` | Your Vercel frontend URL — raw value, no quotes |
-| `NODE_ENV` | `production` in production, `development` to expose error details |
-| `RATE_LIMIT_WINDOW_MS` | Rate limit window in milliseconds (default: 900000) |
-| `RATE_LIMIT_MAX` | Max requests per window for global limiter (default: 300) |
-| `PORT` | Port the server listens on (Railway sets this automatically) |
+| `NODE_ENV` | `production` in prod, `development` to expose error details |
+| `LOGIN_MAX_ATTEMPTS` | Failed login attempts before lockout |
+| `LOGIN_LOCKOUT_MS` | Lockout duration in milliseconds |
+| `OTP_MAX_ATTEMPTS` | Wrong OTP attempts before rejection |
+| `OTP_EXPIRY_MS` | OTP validity window in milliseconds |
+| `AUTH_RATE_LIMIT_WINDOW_MS` | Auth rate limit window in milliseconds |
+| `AUTH_RATE_LIMIT_MAX` | Max auth requests per window |
+| `GLOBAL_RATE_LIMIT_WINDOW_MS` | Global rate limit window in milliseconds |
+| `GLOBAL_RATE_LIMIT_MAX` | Max global requests per window |
+| `PORT` | Port Railway listens on (Railway sets this automatically) |
 
 ### Frontend (Vercel)
 

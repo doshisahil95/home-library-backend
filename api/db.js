@@ -15,7 +15,6 @@ async function connectDB() {
     db = client.db(process.env.DATABASE_NAME);
     console.log("Connected to MongoDB");
     await ensureIndexes();
-    await seedReferenceData();
     return db;
 }
 
@@ -39,7 +38,8 @@ async function ensureIndexes() {
     await books.createIndex({ createdAt: -1 });
     await books.createIndex({ "statuses.userId": 1, "statuses.status": 1 });
     await books.createIndex({ language: 1 });
-    await books.createIndex({ title: 1, author: 1 }, { unique: true });
+    await books.createIndex({ publicByUsers: 1 });          // for public page + settings count
+    await books.createIndex({ title: 1, author: 1 }, { unique: true }); // prevent duplicate books
 
     // Reference data — case-insensitive unique index on name
     const collation = { locale: "en", strength: 2 };
@@ -47,46 +47,10 @@ async function ensureIndexes() {
     await db.collection("houses").createIndex({ name: 1 }, { unique: true, collation });
     await db.collection("languages").createIndex({ name: 1 }, { unique: true, collation });
 
-    const users = db.collection("users");
-    await users.createIndex({ email: 1 }, { unique: true });
+    // Users
+    await db.collection("users").createIndex({ email: 1 }, { unique: true });
 
     console.log("Indexes ensured.");
-}
-
-// ─── Seed reference data ──────────────────────────────────────────────────────
-// Runs on every startup but only inserts if the collection is empty.
-// Values match the current static JSON files so existing books are unaffected.
-
-async function seedReferenceData() {
-    const now = new Date();
-
-    const genreSeeds = [
-        "Fiction", "Fantasy", "Biography", "Science",
-    ];
-
-    const houseSeeds = [
-        "Brahma Courts", "Marvel",
-    ];
-
-    const languageSeeds = [
-        "English", "Hindi", "Gujarati", "Marathi",
-        "Tamil", "Telugu", "Kannada", "Bengali",
-        "French", "German", "Spanish",
-    ];
-
-    const seedCollection = async (collectionName, names) => {
-        const col = db.collection(collectionName);
-        const count = await col.countDocuments();
-        if (count > 0) return; // already seeded — skip
-        await col.insertMany(
-            names.map((name) => ({ name, createdAt: now, updatedAt: now }))
-        );
-        console.log(`Seeded ${collectionName} with ${names.length} entries.`);
-    };
-
-    await seedCollection("genres", genreSeeds);
-    await seedCollection("houses", houseSeeds);
-    await seedCollection("languages", languageSeeds);
 }
 
 // ─── Collection accessors ─────────────────────────────────────────────────────

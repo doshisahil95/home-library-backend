@@ -319,6 +319,7 @@ function parseCSV(text) {
 
 // Normalises a parsed row into the shape validateCSVRow and the DB expect
 function normaliseRow(raw) {
+    const makePublicRaw = (raw.makepublic || raw.makePublic || "").trim().toLowerCase();
     return {
         title: (raw.title || "").trim(),
         author: (raw.author || "").trim(),
@@ -327,6 +328,7 @@ function normaliseRow(raw) {
         language: (raw.language || "").trim(),
         locationInHouse: (raw.locationinhouseue || raw.locationinhouse || "").trim(),
         description: (raw.description || "").trim(),
+        makePublic: makePublicRaw === "true" || makePublicRaw === "1" || makePublicRaw === "yes",
     };
 }
 
@@ -539,6 +541,7 @@ exports.importCSV = async (req, res) => {
                 ? (languageDocs.find((l) => l.name.toLowerCase() === norm.language.toLowerCase())?.name || norm.language)
                 : "";
 
+            const importingUserId = new ObjectId(req.user.id);
             try {
                 await books.insertOne({
                     title: norm.title,
@@ -549,6 +552,7 @@ exports.importCSV = async (req, res) => {
                     locationInHouse: norm.locationInHouse,
                     description: norm.description,
                     statuses: [],
+                    publicByUsers: norm.makePublic ? [importingUserId] : [],
                     createdAt: now,
                     updatedAt: now,
                 });

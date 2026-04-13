@@ -177,6 +177,11 @@ exports.sendResetOTP = async (req, res) => {
             return res.status(200).json({ method: "approved" });
         }
 
+        // User has already set a password — different message from unknown email
+        if (user.password) {
+            return res.status(200).json({ method: "already_registered" });
+        }
+
         // All other users — must contact superadmin to get approval
         return res.status(200).json({ method: "contact_admin" });
 

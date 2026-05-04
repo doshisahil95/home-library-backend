@@ -41,15 +41,20 @@ module.exports = function (app) {
 
     // ─── Reference data ────────────────────────────────────────────────────
     // GET — all authenticated users (needed for modal + filter panel)
-    // POST / PUT / DELETE — admin and superadmin
+    // POST / PUT / DELETE — admin and superadmin only
     app.get("/reference-data/:type", auth, systemController.getAll);
     app.post("/reference-data/:type", auth, requireAdmin, systemController.create);
     app.put("/reference-data/:type/:id", auth, requireAdmin, systemController.update);
     app.delete("/reference-data/:type/:id", auth, requireAdmin, systemController.remove);
 
-    // ─── Admin — reference data + bulk import (admin and superadmin) ───────
+    // ─── Admin — book bulk import (admin and superadmin) ───────────────────
     app.post("/admin/csv/validate", auth, requireAdmin, adminController.validateCSV);
     app.post("/admin/csv/import", auth, requireAdmin, adminController.importCSV);
+
+    // ─── Admin — reference data CSV import/export (admin and superadmin) ─────
+    app.post("/admin/ref-csv/validate", auth, requireAdmin, adminController.validateRefCSV);
+    app.post("/admin/ref-csv/import", auth, requireAdmin, adminController.importRefCSV);
+    app.get("/admin/ref-csv/export/:type", auth, requireAdmin, adminController.exportRefCSV);
 
     // ─── Admin — user management (superadmin only) ─────────────────────────
     app.get("/admin/users", auth, requireSuperAdmin, adminController.listUsers);
@@ -61,6 +66,6 @@ module.exports = function (app) {
     app.post("/admin/users/:id/approve-reset", auth, requireSuperAdmin, adminController.approvePasswordReset);
     app.post("/admin/users/:id/revoke-reset", auth, requireSuperAdmin, adminController.revokePasswordReset);
 
-    // ─── Public (no auth) ─────────────────────────────────────────────────
+    // ─── Public (no auth) ──────────────────────────────────────────────────
     app.get("/public/:userId", publicController.getPublicBooks);
 };

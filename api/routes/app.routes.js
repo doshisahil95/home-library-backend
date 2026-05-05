@@ -4,6 +4,7 @@ const userController = require("../controllers/user.controller.js");
 const dashboardController = require("../controllers/dashboard.controller.js");
 const systemController = require("../controllers/system.controller.js");
 const adminController = require("../controllers/admin.controller.js");
+const seriesController = require("../controllers/series.controller.js");
 const publicController = require("../controllers/public.controller.js");
 const auth = require("../middleware/auth.middleware.js");
 const requireAdmin = require("../middleware/requireAdmin.middleware.js");
@@ -12,27 +13,27 @@ const requireSuperAdmin = require("../middleware/requireSuperAdmin.middleware.js
 module.exports = function (app) {
     const authLimiter = app.locals.authLimiter;
 
-    // ─── Auth (public, rate-limited tightly) ───────────────────────────────
+    // ─── Auth ──────────────────────────────────────────────────────────────
     app.post("/login", authLimiter, loginController.login);
     app.post("/send-reset-otp", authLimiter, loginController.sendResetOTP);
     app.post("/reset-password", authLimiter, loginController.resetPassword);
     app.post("/logout", loginController.logout);
 
-    // ─── Session (protected) ───────────────────────────────────────────────
+    // ─── Session ───────────────────────────────────────────────────────────
     app.get("/me", auth, loginController.getMe);
     app.post("/refresh-token", auth, loginController.refreshToken);
 
-    // ─── Books (protected) ─────────────────────────────────────────────────
+    // ─── Books ─────────────────────────────────────────────────────────────
     app.get("/fetchAllBooks", auth, bookController.fetchAllBooks);
     app.get("/searchBooks", auth, bookController.searchBooks);
     app.post("/addBook", auth, bookController.addBook);
     app.put("/updateBook/:id", auth, bookController.updateBook);
     app.delete("/deleteBook/:id", auth, bookController.deleteBook);
 
-    // ─── Dashboard (protected) ─────────────────────────────────────────────
+    // ─── Dashboard ─────────────────────────────────────────────────────────
     app.get("/dashboard", auth, dashboardController.getDashboardStats);
 
-    // ─── User (protected) ──────────────────────────────────────────────────
+    // ─── User ──────────────────────────────────────────────────────────────
     app.patch("/users/theme", auth, userController.updateTheme);
     app.patch("/users/profile", auth, userController.updateProfile);
     app.post("/users/make-all-private", auth, userController.makeAllPrivate);
@@ -40,29 +41,38 @@ module.exports = function (app) {
     app.get("/discover", auth, userController.getDiscoverData);
 
     // ─── Reference data ────────────────────────────────────────────────────
-    // GET — all authenticated users (needed for modal + filter panel)
-    // POST / PUT / DELETE — admin and superadmin only
     app.get("/reference-data/:type", auth, systemController.getAll);
     app.post("/reference-data/:type", auth, requireAdmin, systemController.create);
     app.put("/reference-data/:type/:id", auth, requireAdmin, systemController.update);
     app.delete("/reference-data/:type/:id", auth, requireAdmin, systemController.remove);
 
-    // ─── Admin — book bulk import (admin and superadmin) ───────────────────
+    // ─── Series ────────────────────────────────────────────────────────────
+    // GET — all authenticated users (BookModal dropdown + Discover)
+    // POST / PUT / DELETE — admin and superadmin only
+    // Assign/remove — all authenticated users (order only shown to admins in UI)
+    app.get("/series", auth, seriesController.listSeries);
+    app.post("/series", auth, requireAdmin, seriesController.createSeries);
+    app.put("/series/:id", auth, requireAdmin, seriesController.updateSeries);
+    app.delete("/series/:id", auth, requireAdmin, seriesController.deleteSeries);
+    app.post("/books/:bookId/series", auth, seriesController.assignBookToSeries);
+    app.delete("/books/:bookId/series", auth, seriesController.removeBookFromSeries);
+
+    // ─── Admin — book bulk import ───────────────────────────────────────────
     app.post("/admin/csv/validate", auth, requireAdmin, adminController.validateCSV);
     app.post("/admin/csv/import", auth, requireAdmin, adminController.importCSV);
 
-    // ─── Admin — reference data CSV import/export (admin and superadmin) ─────
+    // ─── Admin — reference data CSV import/export ───────────────────────────
     app.post("/admin/ref-csv/validate", auth, requireAdmin, adminController.validateRefCSV);
     app.post("/admin/ref-csv/import", auth, requireAdmin, adminController.importRefCSV);
     app.get("/admin/ref-csv/export/:type", auth, requireAdmin, adminController.exportRefCSV);
 
-    // ─── Admin — user management (superadmin only) ─────────────────────────
+    // ─── Admin — user management ────────────────────────────────────────────
     app.get("/admin/users", auth, requireSuperAdmin, adminController.listUsers);
     app.post("/admin/users", auth, requireSuperAdmin, adminController.addUser);
     app.delete("/admin/users/:id", auth, requireSuperAdmin, adminController.deleteUser);
     app.patch("/admin/users/:id/role", auth, requireAdmin, adminController.changeRole);
 
-    // ─── Admin — password reset approval (superadmin only) ─────────────────
+    // ─── Admin — password reset ─────────────────────────────────────────────
     app.post("/admin/users/:id/approve-reset", auth, requireSuperAdmin, adminController.approvePasswordReset);
     app.post("/admin/users/:id/revoke-reset", auth, requireSuperAdmin, adminController.revokePasswordReset);
 

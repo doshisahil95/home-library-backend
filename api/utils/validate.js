@@ -1,24 +1,11 @@
 const { ObjectId } = require("mongodb");
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
 const ok = { valid: true };
 const fail = (message) => ({ valid: false, message });
 
-// ─── Shared ───────────────────────────────────────────────────────────────────
-
 exports.validateObjectId = (id) => {
-    try {
-        new ObjectId(id);
-        return ok;
-    } catch {
-        return fail("Invalid ID");
-    }
+    try { new ObjectId(id); return ok; } catch { return fail("Invalid ID"); }
 };
-
-// ─── Pagination ───────────────────────────────────────────────────────────────
-// Parses and clamps limit/page query params. Returns safe integer values.
-// Centralised so both fetchAllBooks and searchBooks use identical bounds.
 
 const MAX_LIMIT = 100;
 const DEFAULT_LIMIT = 10;
@@ -29,8 +16,6 @@ exports.parsePaginationParams = (query) => {
     const page = Math.max(1, parseInt(query.page) || DEFAULT_PAGE);
     return { limit, page };
 };
-
-// ─── Book ─────────────────────────────────────────────────────────────────────
 
 const ALLOWED_STATUSES = ["read", "reading", "want to read"];
 const ALLOWED_SORT_FIELDS = ["title", "author", "house"];
@@ -43,37 +28,20 @@ exports.validateBookBody = ({ title, author, house, genre, description, language
     if (!author?.trim()) return fail("Author is required");
     if (!house) return fail("House is required");
     if (!genre?.length) return fail("At least one genre is required");
-
-    if (title.trim().length > MAX_TITLE_LEN)
-        return fail(`Title must be ${MAX_TITLE_LEN} characters or fewer`);
-    if (author.trim().length > MAX_AUTHOR_LEN)
-        return fail(`Author must be ${MAX_AUTHOR_LEN} characters or fewer`);
-    if (description && description.length > MAX_DESCRIPTION_LEN)
-        return fail(`Description must be ${MAX_DESCRIPTION_LEN} characters or fewer`);
-
-    // Language is optional — validate only if provided
-    if (language !== undefined && language !== null && language !== "") {
-        if (typeof language !== "string")
-            return fail("Invalid language value");
-    }
-
-    // locationInHouse is optional — validate only if provided
+    if (title.trim().length > MAX_TITLE_LEN) return fail(`Title must be ${MAX_TITLE_LEN} characters or fewer`);
+    if (author.trim().length > MAX_AUTHOR_LEN) return fail(`Author must be ${MAX_AUTHOR_LEN} characters or fewer`);
+    if (description && description.length > MAX_DESCRIPTION_LEN) return fail(`Description must be ${MAX_DESCRIPTION_LEN} characters or fewer`);
+    if (language !== undefined && language !== null && language !== "" && typeof language !== "string") return fail("Invalid language value");
     if (locationInHouse !== undefined && locationInHouse !== null && locationInHouse !== "") {
-        if (typeof locationInHouse !== "string")
-            return fail("Invalid locationInHouse value");
-        if (locationInHouse.length > 200)
-            return fail("Location must be 200 characters or fewer");
+        if (typeof locationInHouse !== "string") return fail("Invalid locationInHouse value");
+        if (locationInHouse.length > 200) return fail("Location must be 200 characters or fewer");
     }
-
-    if (userStatus !== undefined && userStatus !== null && !ALLOWED_STATUSES.includes(userStatus))
-        return fail("Invalid status value");
-
+    if (userStatus !== undefined && userStatus !== null && !ALLOWED_STATUSES.includes(userStatus)) return fail("Invalid status value");
     return ok;
 };
 
 exports.validateStatusFilter = (status) => {
-    if (status && status !== "no-status" && !ALLOWED_STATUSES.includes(status))
-        return fail("Invalid status filter");
+    if (status && status !== "no-status" && !ALLOWED_STATUSES.includes(status)) return fail("Invalid status filter");
     return ok;
 };
 exports.validateLanguageFilter = (language) => {
@@ -81,35 +49,22 @@ exports.validateLanguageFilter = (language) => {
     return ok;
 };
 
-// Whitelists the sortBy field and returns null if not allowed —
-// an invalid sort field is silently ignored rather than rejected,
-// since it is a UX param not a security concern.
 exports.parseSortParams = (query) => {
     const sortBy = ALLOWED_SORT_FIELDS.includes(query.sortBy) ? query.sortBy : null;
     const sortOrder = query.sortOrder === "desc" ? -1 : 1;
     return { sortBy, sortOrder };
 };
 
-// Parses the searchAfter cursor from a JSON query string.
-// Returns { valid, value } on success or { valid: false, message } on failure.
 exports.parseSearchAfter = (raw) => {
     if (!raw) return { valid: true, value: undefined };
-    try {
-        return { valid: true, value: JSON.parse(raw) };
-    } catch {
-        return { valid: false, message: "Invalid searchAfter value" };
-    }
+    try { return { valid: true, value: JSON.parse(raw) }; }
+    catch { return { valid: false, message: "Invalid searchAfter value" }; }
 };
 
-// Coerces filterGenre query param to an array.
-// Express parses repeated params as an array automatically, but a single
-// value comes in as a plain string — normalise to array for consistent handling.
 exports.parseGenreFilter = (filterGenre) => {
     if (!filterGenre) return [];
     return Array.isArray(filterGenre) ? filterGenre : [filterGenre];
 };
-
-// ─── Auth ─────────────────────────────────────────────────────────────────────
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const MIN_PASSWORD_LEN = 8;
@@ -139,16 +94,11 @@ exports.validateEmail = ({ email }) => {
     return ok;
 };
 
-// ─── User ─────────────────────────────────────────────────────────────────────
-
 const ALLOWED_THEMES = ["light", "dark"];
-
 exports.validateTheme = ({ theme }) => {
     if (!ALLOWED_THEMES.includes(theme)) return fail("Invalid theme value");
     return ok;
 };
-
-// ─── Reading dates + rating ───────────────────────────────────────────────────
 
 exports.validateRating = (rating) => {
     if (rating === undefined || rating === null) return ok;
@@ -168,16 +118,10 @@ exports.validateReadingDates = ({ startedAt, finishedAt }) => {
         if (isNaN(d.getTime())) return fail("Invalid finished date");
         if (d > new Date()) return fail("Finished date cannot be in the future");
     }
-    if (startedAt && finishedAt && new Date(finishedAt) < new Date(startedAt)) {
+    if (startedAt && finishedAt && new Date(finishedAt) < new Date(startedAt))
         return fail("Finished date cannot be before started date");
-    }
     return ok;
 };
-
-// ─── Status transition ────────────────────────────────────────────────────────
-// Enforces one-way progression: null → want to read → reading → read
-// Users can always clear their status (set to null).
-// Backwards transitions are not allowed once dates have meaning.
 
 const VALID_TRANSITIONS = {
     null: ["want to read", "reading", "read"],
@@ -189,16 +133,11 @@ const VALID_TRANSITIONS = {
 exports.validateStatusTransition = (currentStatus, newStatus) => {
     if (!newStatus) return ok;
     if (currentStatus === newStatus) return ok;
-
     const allowed = VALID_TRANSITIONS[currentStatus ?? null] ?? [];
-    if (!allowed.includes(newStatus)) {
+    if (!allowed.includes(newStatus))
         return fail(`Cannot change status from "${currentStatus || "none"}" to "${newStatus}"`);
-    }
     return ok;
 };
-
-
-// ─── Admin / User management ──────────────────────────────────────────────────
 
 const ALLOWED_ROLES = ["user", "admin"];
 const MAX_NAME_LEN = 100;
@@ -209,8 +148,6 @@ exports.validateName = ({ name }) => {
     return ok;
 };
 
-// Full password strength check — used when creating a new user or resetting via OTP.
-// Same rules as validateOTPBody but accepts just the password field.
 exports.validateNewPassword = ({ password }) => {
     if (!password) return fail("Password is required");
     if (password.length < MIN_PASSWORD_LEN) return fail(`Password must be at least ${MIN_PASSWORD_LEN} characters`);
@@ -225,28 +162,16 @@ exports.validateRole = ({ role }) => {
     return ok;
 };
 
-// ─── Reference data ───────────────────────────────────────────────────────────
-
 const MAX_REFERENCE_NAME_LEN = 100;
 
-// Converts a string to title case — "fiction" → "Fiction", "sci-fi" → "Sci-Fi"
 exports.toTitleCase = (str) =>
-    str
-        .trim()
-        .toLowerCase()
-        .replace(/(?:^|-|\s)\S/g, (ch) => ch.toUpperCase());
+    str.trim().toLowerCase().replace(/(?:^|-|\s)\S/g, (ch) => ch.toUpperCase());
 
 exports.validateReferenceName = (name) => {
     if (!name || !name.trim()) return fail("Name is required");
-    if (name.trim().length > MAX_REFERENCE_NAME_LEN)
-        return fail(`Name must be ${MAX_REFERENCE_NAME_LEN} characters or fewer`);
+    if (name.trim().length > MAX_REFERENCE_NAME_LEN) return fail(`Name must be ${MAX_REFERENCE_NAME_LEN} characters or fewer`);
     return ok;
 };
-
-// ─── CSV bulk upload ──────────────────────────────────────────────────────────
-// Validates a single parsed CSV row against field rules only.
-// Reference data checks (house/genre/language existence) and DB duplicate
-// checks are done separately in the controller — keeps this pure and fast.
 
 const MAX_GENRES_PER_BOOK = 10;
 
@@ -255,17 +180,29 @@ exports.validateCSVRow = ({ title, author, house, genres, language, locationInHo
     if (!author || !author.trim()) return fail("Author is required");
     if (!house || !house.trim()) return fail("House is required");
     if (!genres || genres.length === 0) return fail("At least one genre is required");
+    if (title.trim().length > MAX_TITLE_LEN) return fail(`Title must be ${MAX_TITLE_LEN} characters or fewer`);
+    if (author.trim().length > MAX_AUTHOR_LEN) return fail(`Author must be ${MAX_AUTHOR_LEN} characters or fewer`);
+    if (description && description.length > MAX_DESCRIPTION_LEN) return fail(`Description must be ${MAX_DESCRIPTION_LEN} characters or fewer`);
+    if (locationInHouse && locationInHouse.length > 200) return fail("Location must be 200 characters or fewer");
+    if (genres.length > MAX_GENRES_PER_BOOK) return fail(`A book can have at most ${MAX_GENRES_PER_BOOK} genres`);
+    return ok;
+};
 
-    if (title.trim().length > MAX_TITLE_LEN)
-        return fail(`Title must be ${MAX_TITLE_LEN} characters or fewer`);
-    if (author.trim().length > MAX_AUTHOR_LEN)
-        return fail(`Author must be ${MAX_AUTHOR_LEN} characters or fewer`);
-    if (description && description.length > MAX_DESCRIPTION_LEN)
-        return fail(`Description must be ${MAX_DESCRIPTION_LEN} characters or fewer`);
-    if (locationInHouse && locationInHouse.length > 200)
-        return fail("Location must be 200 characters or fewer");
-    if (genres.length > MAX_GENRES_PER_BOOK)
-        return fail(`A book can have at most ${MAX_GENRES_PER_BOOK} genres`);
+// ─── Series ───────────────────────────────────────────────────────────────────
 
+const MAX_SERIES_NAME_LEN = 200;
+const MAX_SERIES_DESC_LEN = 1000;
+
+exports.validateSeriesBody = ({ name, description }) => {
+    if (!name || !name.trim()) return fail("Series name is required");
+    if (name.trim().length > MAX_SERIES_NAME_LEN) return fail(`Series name must be ${MAX_SERIES_NAME_LEN} characters or fewer`);
+    if (description && description.length > MAX_SERIES_DESC_LEN) return fail(`Description must be ${MAX_SERIES_DESC_LEN} characters or fewer`);
+    return ok;
+};
+
+exports.validateSeriesOrder = (order) => {
+    if (order === undefined || order === null || order === "") return ok;
+    const n = Number(order);
+    if (!Number.isInteger(n) || n < 1 || n > 9999) return fail("Series order must be a whole number between 1 and 9999");
     return ok;
 };

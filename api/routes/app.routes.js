@@ -5,6 +5,7 @@ const dashboardController = require("../controllers/dashboard.controller.js");
 const systemController = require("../controllers/system.controller.js");
 const adminController = require("../controllers/admin.controller.js");
 const seriesController = require("../controllers/series.controller.js");
+const wishlistController = require("../controllers/wishlist.controller.js");
 const publicController = require("../controllers/public.controller.js");
 const auth = require("../middleware/auth.middleware.js");
 const requireAdmin = require("../middleware/requireAdmin.middleware.js");
@@ -30,6 +31,9 @@ module.exports = function (app) {
     app.put("/updateBook/:id", auth, bookController.updateBook);
     app.delete("/deleteBook/:id", auth, bookController.deleteBook);
 
+    // ─── Book notes (per-user, private) ────────────────────────────────────
+    app.put("/books/:bookId/note", auth, userController.upsertNote);
+
     // ─── Dashboard ─────────────────────────────────────────────────────────
     app.get("/dashboard", auth, dashboardController.getDashboardStats);
 
@@ -40,6 +44,10 @@ module.exports = function (app) {
     app.get("/users/public-count", auth, userController.getPublicCount);
     app.get("/discover", auth, userController.getDiscoverData);
 
+    // ─── Reading goal ───────────────────────────────────────────────────────
+    app.get("/users/reading-goal", auth, userController.getReadingGoal);
+    app.put("/users/reading-goal", auth, userController.setReadingGoal);
+
     // ─── Reference data ────────────────────────────────────────────────────
     app.get("/reference-data/:type", auth, systemController.getAll);
     app.post("/reference-data/:type", auth, requireAdmin, systemController.create);
@@ -47,15 +55,18 @@ module.exports = function (app) {
     app.delete("/reference-data/:type/:id", auth, requireAdmin, systemController.remove);
 
     // ─── Series ────────────────────────────────────────────────────────────
-    // GET — all authenticated users (BookModal dropdown + Discover)
-    // POST / PUT / DELETE — admin and superadmin only
-    // Assign/remove — all authenticated users (order only shown to admins in UI)
     app.get("/series", auth, seriesController.listSeries);
     app.post("/series", auth, requireAdmin, seriesController.createSeries);
     app.put("/series/:id", auth, requireAdmin, seriesController.updateSeries);
     app.delete("/series/:id", auth, requireAdmin, seriesController.deleteSeries);
     app.post("/books/:bookId/series", auth, seriesController.assignBookToSeries);
     app.delete("/books/:bookId/series", auth, seriesController.removeBookFromSeries);
+
+    // ─── Wishlist (private per user) ────────────────────────────────────────
+    app.get("/wishlist", auth, wishlistController.getWishlist);
+    app.post("/wishlist", auth, wishlistController.addItem);
+    app.put("/wishlist/:itemId", auth, wishlistController.updateItem);
+    app.delete("/wishlist/:itemId", auth, wishlistController.deleteItem);
 
     // ─── Admin — book bulk import ───────────────────────────────────────────
     app.post("/admin/csv/validate", auth, requireAdmin, adminController.validateCSV);
@@ -78,4 +89,4 @@ module.exports = function (app) {
 
     // ─── Public (no auth) ──────────────────────────────────────────────────
     app.get("/public/:userId", publicController.getPublicBooks);
-};
+};  

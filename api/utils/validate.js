@@ -206,3 +206,26 @@ exports.validateSeriesOrder = (order) => {
     if (!Number.isInteger(n) || n < 1 || n > 9999) return fail("Series order must be a whole number between 1 and 9999");
     return ok;
 };
+
+// ─── Reading goal ─────────────────────────────────────────────────────────────
+
+exports.validateReadingGoal = (target) => {
+    const n = Number(target);
+    if (!Number.isInteger(n) || n < 1 || n > 9999)
+        return { valid: false, message: "Reading goal must be a whole number between 1 and 9999" };
+    return { valid: true };
+};
+
+// ─── Wishlist ─────────────────────────────────────────────────────────────────
+
+const MAX_WISHLIST_NOTE_LEN = 1000;
+
+exports.validateWishlistItem = ({ title, author, note }) => {
+    if (!title || !title.trim()) return { valid: false, message: "Title is required" };
+    if (title.trim().length > 200) return { valid: false, message: "Title must be 200 characters or fewer" };
+    if (!author || !author.trim()) return { valid: false, message: "Author is required" };
+    if (author.trim().length > 200) return { valid: false, message: "Author must be 200 characters or fewer" };
+    if (note && note.length > MAX_WISHLIST_NOTE_LEN)
+        return { valid: false, message: `Note must be ${MAX_WISHLIST_NOTE_LEN} characters or fewer` };
+    return { valid: true };
+};

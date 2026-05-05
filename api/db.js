@@ -35,6 +35,9 @@ async function ensureIndexes() {
     await db.collection("series").createIndex({ name: 1 }, { unique: true, collation });
     await db.collection("users").createIndex({ email: 1 }, { unique: true });
 
+    // Wishlist — one entry per user, fast lookup by userId
+    await db.collection("wishlist").createIndex({ userId: 1 });
+
     console.log("Indexes ensured.");
 }
 
@@ -44,5 +47,9 @@ function getGenres() { return db.collection("genres"); }
 function getHouses() { return db.collection("houses"); }
 function getLanguages() { return db.collection("languages"); }
 function getSeries() { return db.collection("series"); }
+function getWishlist() { return db.collection("wishlist"); }
 
-module.exports = { connectDB, disconnectDB, getBooks, getUsers, getGenres, getHouses, getLanguages, getSeries };
+module.exports = {
+    connectDB, disconnectDB,
+    getBooks, getUsers, getGenres, getHouses, getLanguages, getSeries, getWishlist,
+};

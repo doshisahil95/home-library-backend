@@ -45,7 +45,7 @@ exports.fetchAllBooks = async (req, res) => {
         const skip = (page - 1) * limit;
 
         const { sortBy, sortOrder } = validate.parseSortParams(req.query);
-        const sortStage = sortBy ? { [sortBy]: sortOrder, _id: sortOrder } : { _id: -1 };
+        const sortStage = sortBy ? { [sortBy]: sortOrder, _id: sortOrder } : { _id: 1 };
 
         const filter = {};
 

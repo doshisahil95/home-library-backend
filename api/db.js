@@ -1,7 +1,49 @@
+
 const { MongoClient } = require("mongodb");
 
 const client = new MongoClient(process.env.MONGODB_URI, { compressors: ["zstd"] });
 let db;
+
+const BOOK_SEARCH_INDEX_NAME = "bookSearch";
+
+const BOOK_SEARCH_INDEX_DEFINITION = {
+    mappings: {
+        dynamic: false,
+        fields: {
+            _id: { type: "objectId" },
+            title: [
+                {
+                    type: "autocomplete",
+                    tokenization: "edgeGram",
+                    minGrams: 2,
+                    maxGrams: 15,
+                    foldDiacritics: true,
+                },
+            ],
+            author: [
+                {
+                    type: "autocomplete",
+                    tokenization: "edgeGram",
+                    minGrams: 2,
+                    maxGrams: 15,
+                    foldDiacritics: true,
+                },
+            ],
+            house: { type: "token" },
+            language: { type: "token" },
+            genre: { type: "token" },
+            createdAt: { type: "date" },
+            statuses: {
+                type: "embeddedDocuments",
+                dynamic: false,
+                fields: {
+                    userId: { type: "objectId" },
+                    status: { type: "token" },
+                },
+            },
+        },
+    },
+};
 
 async function connectDB() {
     await client.connect();
@@ -38,7 +80,33 @@ async function ensureIndexes() {
     // Wishlist — one entry per user, fast lookup by userId
     await db.collection("wishlist").createIndex({ userId: 1 });
 
+    await ensureBookSearchIndex(books);
+
     console.log("Indexes ensured.");
+}
+
+async function ensureBookSearchIndex(booksCollection) {
+    try {
+        const existing = await booksCollection.listSearchIndexes().toArray();
+        const alreadyExists = existing.some(
+            (idx) => idx.name === BOOK_SEARCH_INDEX_NAME
+        );
+        if (alreadyExists) {
+            console.log(`Atlas Search index "${BOOK_SEARCH_INDEX_NAME}" already exists.`);
+            return;
+        }
+        await booksCollection.createSearchIndex({
+            name: BOOK_SEARCH_INDEX_NAME,
+            definition: BOOK_SEARCH_INDEX_DEFINITION,
+        });
+        console.log(
+            `Created Atlas Search index "${BOOK_SEARCH_INDEX_NAME}" — may take 10-60s to become queryable.`
+        );
+    } catch (err) {
+        // listSearchIndexes / createSearchIndex throw on local Mongo or unsupported clusters.
+        // Don't crash the server — search just won't work until the index is created manually.
+        console.warn(`Skipping Atlas Search index setup: ${err.message}`);
+    }
 }
 
 function getBooks() { return db.collection("books"); }

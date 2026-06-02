@@ -83,7 +83,7 @@ process.on("SIGINT", () => gracefulShutdown("SIGINT"));
 process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
 
 // ─── HTTPS enforcement ────────────────────────────────────────────────────────
-// Railway terminates TLS at the edge and forwards via x-forwarded-proto.
+// Render terminates TLS at the edge and forwards via x-forwarded-proto.
 // Redirect any plain HTTP request to HTTPS in production.
 
 app.set("trust proxy", 1);

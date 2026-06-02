@@ -128,6 +128,15 @@ app.use(cors({
     credentials: true,
 }));
 
+// ─── Health check ─────────────────────────────────────────────────────────────
+// Lightweight endpoint used by the Login page to warm a cold instance before
+// the user submits credentials. Placed BEFORE rate limiting and body/cookie
+// parsing so it stays fast and doesn't consume the rate-limit budget. Does
+// not touch MongoDB — the goal is to wake the Node process.
+app.get("/health", (req, res) => {
+    res.json({ ok: true, uptime: process.uptime() });
+});
+
 // ─── Cookie parsing ───────────────────────────────────────────────────────────
 
 app.use(cookieParser());

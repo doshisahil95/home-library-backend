@@ -3,7 +3,6 @@ const { getUsers, getBooks, getSeries } = require("../db.js");
 const validate = require("../utils/validate.js");
 
 // ─── Update theme ─────────────────────────────────────────────────────────────
-
 exports.updateTheme = async (req, res) => {
     try {
         const tv = validate.validateTheme({ theme: req.body.theme });
@@ -21,7 +20,6 @@ exports.updateTheme = async (req, res) => {
 };
 
 // ─── Update profile ───────────────────────────────────────────────────────────
-
 exports.updateProfile = async (req, res) => {
     try {
         const { name } = req.body;
@@ -40,7 +38,6 @@ exports.updateProfile = async (req, res) => {
 };
 
 // ─── Make all books private ───────────────────────────────────────────────────
-
 exports.makeAllPrivate = async (req, res) => {
     try {
         const userId = new ObjectId(req.user.id);
@@ -55,7 +52,6 @@ exports.makeAllPrivate = async (req, res) => {
 };
 
 // ─── Get public book count ────────────────────────────────────────────────────
-
 exports.getPublicCount = async (req, res) => {
     try {
         const count = await getBooks().countDocuments({ publicByUsers: new ObjectId(req.user.id) });
@@ -68,7 +64,6 @@ exports.getPublicCount = async (req, res) => {
 // ─── Reading goal ─────────────────────────────────────────────────────────────
 // Goal is stored as { target, year } on the user document.
 // The year is stored so we can always know if the goal is for the current year.
-
 exports.setReadingGoal = async (req, res) => {
     try {
         const { target } = req.body;
@@ -92,10 +87,8 @@ exports.getReadingGoal = async (req, res) => {
         const userId = new ObjectId(req.user.id);
         const user = await getUsers().findOne({ _id: userId }, { projection: { readingGoal: 1 } });
         if (!user) return res.status(404).json({ message: "User not found" });
-
         const currentYear = new Date().getFullYear();
         const goal = user.readingGoal?.year === currentYear ? user.readingGoal : null;
-
         // Count books read this year
         const startOfYear = new Date(`${currentYear}-01-01T00:00:00.000Z`);
         const booksReadThisYear = await getBooks().countDocuments({
@@ -107,7 +100,6 @@ exports.getReadingGoal = async (req, res) => {
                 },
             },
         });
-
         res.json({ data: { goal, booksReadThisYear, year: currentYear } });
     } catch (err) {
         res.status(500).json({ message: "Failed to get reading goal" });
@@ -116,54 +108,58 @@ exports.getReadingGoal = async (req, res) => {
 
 // ─── Book notes ───────────────────────────────────────────────────────────────
 // Notes are stored as an array on the book: notes: [{ userId, text, updatedAt }]
-// Private — only the owning user can read/write their note.
-
+// Visible to all household members — surfaced on the Books page expanded row
+// and on the Discover "Recently Finished by Others" widget.
 exports.upsertNote = async (req, res) => {
     try {
         const { bookId } = req.params;
         const { text } = req.body;
-
         const idv = validate.validateObjectId(bookId);
         if (!idv.valid) return res.status(400).json({ message: idv.message });
         if (text && text.length > 1000) return res.status(400).json({ message: "Note must be 1000 characters or fewer" });
-
         const userId = new ObjectId(req.user.id);
         const bookObjId = new ObjectId(bookId);
         const books = getBooks();
-
         const book = await books.findOne({ _id: bookObjId }, { projection: { _id: 1 } });
         if (!book) return res.status(404).json({ message: "Book not found" });
-
         if (!text || !text.trim()) {
             // Empty text = delete the note
             await books.updateOne({ _id: bookObjId }, { $pull: { notes: { userId } } });
             return res.json({ success: true, deleted: true });
         }
-
         // Upsert: remove old note then push new one atomically
         await books.updateOne({ _id: bookObjId }, { $pull: { notes: { userId } } });
         await books.updateOne(
             { _id: bookObjId },
             { $push: { notes: { userId, text: text.trim(), updatedAt: new Date() } } }
         );
-
         res.json({ success: true, data: { text: text.trim(), updatedAt: new Date() } });
     } catch (err) {
         res.status(500).json({ message: "Failed to save note", error: process.env.NODE_ENV === "development" ? err.message : undefined });
     }
 };
 
-// ─── Get discover data ────────────────────────────────────────────────────────
+// ─── Recommendation scoring helpers ───────────────────────────────────────────
+// Signed rating adjustment: penalises books rated poorly by the household and
+// rewards books rated well. Books with no ratings are treated as neutral so
+// they can still be discovered via genre and series signals.
+function ratingAdjustment(avg) {
+    if (avg == null) return 0;
+    if (avg >= 4.5) return 6;
+    if (avg >= 3.5) return 3;
+    if (avg >= 2.5) return 0;
+    if (avg >= 1.5) return -3;
+    return -6;
+}
 
+// ─── Get discover data ────────────────────────────────────────────────────────
 exports.getDiscoverData = async (req, res) => {
     try {
         const idv = validate.validateObjectId(req.user.id);
         if (!idv.valid) return res.status(400).json({ message: idv.message });
-
         const userId = new ObjectId(req.user.id);
         const books = getBooks();
         const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-
         const [
             myStatus,
             myGenreBreakdown,
@@ -174,7 +170,6 @@ exports.getDiscoverData = async (req, res) => {
             allUsers,
             seriesList,
         ] = await Promise.all([
-
             // 1. My reading status counts
             books.aggregate([
                 { $unwind: "$statuses" },
@@ -192,7 +187,7 @@ exports.getDiscoverData = async (req, res) => {
                 { $project: { _id: 0, genre: "$_id", count: 1 } },
             ]).toArray(),
 
-            // 3. Recently finished by others (for recs score later)
+            // 3. Recently finished by others — includes that reader's note text if any
             books.aggregate([
                 { $unwind: "$statuses" },
                 { $match: { "statuses.status": "read", "statuses.userId": { $ne: userId } } },
@@ -206,6 +201,22 @@ exports.getDiscoverData = async (req, res) => {
                         rating: "$statuses.rating",
                         readerName: { $arrayElemAt: ["$readerInfo.name", 0] },
                         isRecent: { $gte: ["$statuses.finishedAt", thirtyDaysAgo] },
+                        note: {
+                            $let: {
+                                vars: {
+                                    matched: {
+                                        $first: {
+                                            $filter: {
+                                                input: { $ifNull: ["$notes", []] },
+                                                as: "n",
+                                                cond: { $eq: ["$$n.userId", "$statuses.userId"] },
+                                            },
+                                        },
+                                    },
+                                },
+                                in: "$$matched.text",
+                            },
+                        },
                     }
                 },
             ]).toArray(),
@@ -258,7 +269,6 @@ exports.getDiscoverData = async (req, res) => {
                         $or: [
                             { "statuses.status": "reading", "statuses.startedAt": { $gte: thirtyDaysAgo } },
                             { "statuses.status": "read", "statuses.finishedAt": { $gte: thirtyDaysAgo } },
-                            // want to read: no date field — use updatedAt on the book as proxy
                         ],
                     }
                 },
@@ -290,14 +300,16 @@ exports.getDiscoverData = async (req, res) => {
         ]);
 
         // ── Enhanced recommendations ────────────────────────────────────────
-        // Factors: genre match score + rating bonus + recency bonus + series progression
+        // Factors: genre match + signed rating adjustment + recency bonus (only for
+        // liked books) + series progression. A book the household rated poorly
+        // ends up with a negative rating adjustment and gets filtered out unless
+        // it has very strong genre overlap.
 
         // Get my read/reading book IDs and genres
         const myBooks = await books.find(
             { statuses: { $elemMatch: { userId, status: { $in: ["read", "reading"] } } } },
             { projection: { genre: 1, series: 1, "statuses.$": 1 } }
         ).toArray();
-
         const myGenreCounts = {};
         const mySeriesIds = new Set();
         for (const b of myBooks) {
@@ -351,20 +363,20 @@ exports.getDiscoverData = async (req, res) => {
         // Score each candidate
         const scored = candidates.map((book) => {
             let score = 0;
-
             // Genre match
             (book.genre || []).forEach((g) => { score += myGenreCounts[g] || 0; });
-
-            // Rating bonus — avg rating of others × 2
+            // Rating adjustment — signed, can be negative for poorly-rated books
             const ratings = ratingMap[book._id.toString()];
+            let avg = null;
             if (ratings?.length) {
-                const avg = ratings.reduce((a, b) => a + b, 0) / ratings.length;
-                score += avg * 2;
+                avg = ratings.reduce((a, b) => a + b, 0) / ratings.length;
+                score += ratingAdjustment(avg);
             }
-
-            // Recency bonus — recently finished by others
-            if (recentlyFinishedIds.has(book._id.toString())) score += 3;
-
+            // Recency bonus — only celebrate recency for books people actually liked.
+            // If no ratings yet, we still give the recency bonus (neutral case).
+            if (recentlyFinishedIds.has(book._id.toString()) && (avg == null || avg >= 3)) {
+                score += 3;
+            }
             // Series progression bonus — next book in a series I've started
             if (book.series?.id && book.series?.order != null) {
                 const sid = book.series.id.toString();
@@ -375,7 +387,7 @@ exports.getDiscoverData = async (req, res) => {
             return { ...book, matchScore: score };
         });
 
-        // Filter to only books with some relevance, sort by score
+        // Filter to only books with positive score, sort by score desc
         const recommendations = scored
             .filter((b) => b.matchScore > 0)
             .sort((a, b) => b.matchScore - a.matchScore)

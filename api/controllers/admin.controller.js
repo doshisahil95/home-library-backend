@@ -713,3 +713,65 @@ exports.exportRefCSV = async (req, res) => {
 function escapeRegex(str) {
     return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
+
+/* ─── EXPORT BOOK CSV ──────────────────────────────────────────────────────── */
+// Returns all books as a CSV download. Columns match the import format so the
+// exported file can be edited and re-uploaded without column mapping. Per-user
+// state (statuses, ratings, notes, public sharing) is intentionally not
+// included — the CSV is a library-level snapshot, not a per-user snapshot.
+exports.exportBooksCSV = async (req, res) => {
+    try {
+        const books = getBooks();
+        const all = await books
+            .find({}, {
+                projection: {
+                    title: 1, author: 1, house: 1, genre: 1, language: 1,
+                    locationInHouse: 1, description: 1, series: 1,
+                },
+            })
+            .sort({ title: 1, author: 1 })
+            .toArray();
+
+        const header = "title,author,house,genre,language,locationInHouse,description,makePublic,series,seriesOrder";
+        const lines = [header];
+
+        for (const book of all) {
+            const seriesName = book.series?.name || "";
+            const seriesOrder = book.series?.order ?? "";
+            lines.push([
+                csvEscape(book.title),
+                csvEscape(book.author),
+                csvEscape(book.house || ""),
+                csvEscape((book.genre || []).join(";")),
+                csvEscape(book.language || ""),
+                csvEscape(book.locationInHouse || ""),
+                csvEscape(book.description || ""),
+                "false",
+                csvEscape(seriesName),
+                seriesOrder === "" ? "" : String(seriesOrder),
+            ].join(","));
+        }
+
+        const csv = lines.join("\n");
+        const stamp = new Date().toISOString().slice(0, 10);
+        res.setHeader("Content-Type", "text/csv");
+        res.setHeader("Content-Disposition", `attachment; filename="books_export_${stamp}.csv"`);
+        res.send(csv);
+    } catch (error) {
+        res.status(500).json({
+            message: "Export failed",
+            error: process.env.NODE_ENV === "development" ? error.message : undefined,
+        });
+    }
+};
+
+// Wraps any field that contains a comma, quote, or newline in quotes and
+// escapes internal quotes by doubling them. Matches the parser in parseCSV().
+function csvEscape(value) {
+    if (value == null) return "";
+    const str = String(value);
+    if (str.includes(",") || str.includes('"') || str.includes("\n") || str.includes("\r")) {
+        return `"${str.replace(/"/g, '""')}"`;
+    }
+    return str;
+}

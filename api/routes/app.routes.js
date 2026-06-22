@@ -71,6 +71,7 @@ module.exports = function (app) {
     // ─── Admin — book bulk import ───────────────────────────────────────────
     app.post("/admin/csv/validate", auth, requireAdmin, adminController.validateCSV);
     app.post("/admin/csv/import", auth, requireAdmin, adminController.importCSV);
+    app.get("/admin/csv/export", auth, requireAdmin, adminController.exportBooksCSV);
 
     // ─── Admin — reference data CSV import/export ───────────────────────────
     app.post("/admin/ref-csv/validate", auth, requireAdmin, adminController.validateRefCSV);
